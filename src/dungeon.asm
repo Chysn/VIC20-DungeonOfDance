@@ -282,7 +282,7 @@ ISR:        inc TIME_L
             bit HAS_KEY
             bmi isr_r
             lda TIME_L
-            rol
+            ror
             bcc isr_r
             lda $9755
             eor #$07
@@ -608,7 +608,20 @@ win:        jsr LevelMult       ; Increase XP based on level
             sta UNDER           ; ,,
             ldx #0              ; ,,
             sta (ENC_PTR,x)     ; ,,
-            lda #0              ; Reset last encounter so there's a new pattern
+            lda LAST_ENC        ; Wraiths don't leave the maze when defeated,
+            cmp #2              ;   they just pick another spot to haunt
+            bne reset_enc       ;   ,,
+            lda #CHR_WRAITH     ;   ,,
+            sec                 ;   ,,
+            jsr Position        ;   ,,
+            tay                 ;   ,,
+            lda #$78            ; Set the color of the moved wraith to black
+            clc                 ; ,,
+            adc PTR+1           ; ,,
+            sta PTR+1           ; ,,
+            lda #0              ; ,,
+            sta (PTR),y         ; ,,
+reset_enc:  lda #0              ; Reset last encounter so there's a new pattern
             sta LAST_ENC        ;   for the next monster of this kind
             rts
 lose:       lda #2              ; Launch defeat effect
@@ -890,6 +903,7 @@ move_r:     rts
              
 ; Write character in A to a random cell.
 ; If carry is set, Position will try again if the cell is occupied
+; A will be set to the index of the successful position
 Position:   pha
             sty TMP_IX
             php
@@ -909,7 +923,8 @@ Position:   pha
 pos_ok:     plp
             pla
             sta (PTR),y
-            ldy TMP_IX
+            tya                 ; Put position in A for access outside subroutine
+            ldy TMP_IX          ; Restore Y
             rts
                         
 ; Plot Character
@@ -1275,8 +1290,7 @@ Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
