@@ -65,8 +65,8 @@ CharSet:    ; Letters (* used,- reassignable)
             ; Indicators
             .byte $3c,$66,$66,$3c,$10,$1c,$10,$18 ; Key Indicator  ($1b)
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; Dungeon Fill   ($1c)
-            .byte $34,$74,$14,$f8,$18,$14,$14,$24 ; Dance Up       ($1d)
-            .byte $00,$18,$1c,$10,$7f,$38,$44,$44 ; Dance Down     ($1e)
+            .byte $b2,$ba,$92,$7c,$10,$1c,$24,$44 ; Dance Up       ($1d)
+            .byte $00,$38,$38,$10,$7c,$92,$38,$c6 ; Dance Down     ($1e)
             .byte $3c,$7e,$7e,$7e,$7a,$7a,$7e,$7e ; Door           ($1f)    
             .byte $00,$00,$00,$00,$00,$00,$00,$00 ; Space          ($20)
             
