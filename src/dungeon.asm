@@ -129,6 +129,7 @@ LAST_ENC    = $fe               ; Last monster encounter
 TMP_IX      = $07               ; Temporary index
 PATT_LEN    = $a5               ; Pattern length
 PATTERN     = $033c             ; Current pattern
+ENC_PTR     = $00               ; Monster encounter save
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; MAIN PROGRAM
@@ -193,12 +194,16 @@ leave_char: lda UNDER           ; Replace the character under the player as
             ldx COOR_Y          ;   ,,
             stx TMP_COOR_Y      ;   ,,
             pla                 ; Get direction back
+            pha                 ; Save the direction for playing the tone
             tax                 ; Convert joystick code to compass point
             lda Compass,x       ; ,,
             jsr MoveCoor        ; Move coordinate based on compass point
             jsr DecEnergy       ; Use one energy for the movement
             jsr Encounter       ; Process encounter
             jsr DrawPlayer      ; Draw the player
+            pla                 ; Play the tone in A
+            ldy #8              ; ,,
+            jsr DirTone         ; ,,
 debounce:   jsr Joystick        ; Debounce the joystick
             bne debounce        ; ,,
             beq Main
@@ -519,17 +524,25 @@ mult_xp:    adc SCRPAD
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;     
 ; Dance Off
 DanceOff:   jsr PattMake
-            jsr PattPlay
-            jsr PattListen
-            bcc lose
-            lda LAST_ENC
+            ldy PTR             ; Store the monster position, so it can be
+            sty ENC_PTR         ;   cleared if the monster is defeated
+            ldy PTR+1           ;   ,,
+            sty ENC_PTR+1       ;   ,,
+            jsr Revert          ; Put the player back where he or she was
+            jsr Coor2Ptr        ;   in order to display the dance moves
+            jsr PattPlay        ; Play the pattern and listen for response.
+            bne lose            ;   Z flag is set if player won
+            lda LAST_ENC        ; Get the monster strength
             cmp #$04            ; Is this the dragon?
             bne win             ; ,,
             sec                 ; If so, set the HAS_KEY flag when the dragon
             ror HAS_KEY         ;   has been defeated
 win:        jsr LevelMult       ; Increase XP based on level
             jsr IncXP           ; ,,
-            jsr RemoveItem      ; Remove the vanquished foe from the dungeon
+            lda #CHR_OPEN       ; Remove the vanquished foe from the dungeon
+            sta UNDER           ; ,,
+            ldx #0              ; ,,
+            sta (ENC_PTR,x)     ; ,,
             lda #0              ; Reset last encounter so there's a new pattern
             sta LAST_ENC        ;   for the next monster of this kind
             rts
@@ -538,9 +551,9 @@ lose:       lda LAST_ENC        ; Multiply monster strength times level number
             and TIME_L          ; AND with the jiffy clock to possibly remove
             ora LAST_ENC        ;   bits, then ORA with the monster strength for
             jsr DecHP           ;   a minimum HP loss
-            lda #CHR_OPEN       ; And the player will be put back where he or
-            sta UNDER           ;   she was
-            jmp Revert          ; You shall not pass!  
+            lda #CHR_OPEN       ; Clear the cell under the player
+            sta UNDER           ; ,,
+            rts
             
 PattMake:   sec                 ; Set encounter to monster level, where
             sbc #CHR_GOBLIN-1   ; 1 = Goblin, 2 = Wraith, 4 = Dragon
@@ -558,7 +571,9 @@ new_patt:   sta LAST_ENC        ; Set the last encounter
             lda #>SEED
             sta P_RAND+1
 -loop:      jsr RandDir
-            sta PATTERN,y
+            clc                 ; Add one to the random number so that it's a
+            adc #1              ;   valid direction (1=N 2=E 3=S 4=W)
+            sta PATTERN,y       ; Store the pattern in reverse order
             dey
             bne loop            
             rts
@@ -569,6 +584,9 @@ PattPlay:   ldy PATT_LEN
             tax
             lda Note,x
             sta VOICEM
+            lda Dance,x
+            ldx #0
+            sta (PTR,x)
             lda #20
             jsr Delay
             lda #0
@@ -577,11 +595,33 @@ PattPlay:   ldy PATT_LEN
             jsr Delay
             dey
             bne loop
-            rts
+            ; Fall through to PattListen
 
-PattListen: lda $9003
-            rol
+PattListen: lda #1              ; Set color to white during the listen
+            jsr SetColor        ; ,,
+            jsr Joystick        ; Debounce the joystick before responding
+            bne PattListen      ; ,,
+            ldy PATT_LEN
+-loop:      jsr Joystick
+            beq loop
+            cmp PATTERN,y
+            beq hit_move
             rts
+hit_move:   tax
+            lda Note,x
+            sta VOICEM
+            lda Dance,x
+            ldx #0
+            sta (PTR,x)
+            lda #20
+            jsr Delay
+            lda #0
+            sta VOICEM
+lis_deb:    jsr Joystick        ; Debounce joystick
+            bne lis_deb         ; ,,
+            dey
+            bne loop
+            rts            
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; MAZE ROUTINES
@@ -964,7 +1004,7 @@ InitLevel:  inc LEVEL           ; Increment player level counter
             ora #$c1            ; ,, In high memory, at least $c100
             sta P_RAND+1        ; ,,
             lda #0              ; Obfuscate the play area
-            lda #6             ; Uncomment for maze diagnostics
+            ;lda #6             ; Uncomment for maze diagnostics
             jsr WipeColor       ; ,,
             jsr MakeMaze        ; Make the maze
             jsr Populate        ; Populate it
@@ -990,7 +1030,23 @@ WipeColor:  ldy #0
             dey
             bne loop
             rts
-
+            
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; SOUND ROUTINES
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Play Direction Tone
+; With A as the direction (0-3)
+; With Y as the length (in jiffies)
+DirTone:    pha
+            tax
+            lda Note,x
+            sta VOICEM
+            tya
+            jsr Delay
+            lda #0
+            sta VOICEM
+            pla
+            rts
                        
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; DATA
@@ -1023,4 +1079,8 @@ ItemColors: .byte COL_POTION,COL_ARMOR,COL_FOOD,COL_GOBLIN,COL_WRAITH,COL_DRAGON
 ; Note Table
 ; Selections from chromatic scale (tonic, major 3rd, 5th, 6th)
 ; 194,197,201,204,207,209,212,214,217,219,221,223,225
-Note:       .byte 194,207,214,219
+Note:       .byte 0,194,207,214,219
+
+; Dance Table
+; Dance moves based on direction
+Dance:      .byte 0,$1d,$03,$1e,$02

@@ -32,8 +32,10 @@ CharSet:    ; Letters (* used,- reassignable)
             ; QUEST OVER
             .byte $00,$00,$20,$10,$00,$20,$10,$00 ; Colon
             .byte $10,$28,$44,$54,$82,$fe,$82,$00 ; A *
-            .byte $fc,$42,$62,$9c,$62,$42,$fc,$00 ; B -
-            .byte $3a,$46,$82,$90,$80,$42,$3c,$00 ; C -
+            ;.byte $fc,$42,$62,$9c,$62,$42,$fc,$00 ; B -
+            ;.byte $3a,$46,$82,$90,$80,$42,$3c,$00 ; C -
+            .byte $18,$38,$08,$78,$08,$14,$24,$14 ; Dance Left     ($02)
+            .byte $18,$1c,$10,$1e,$10,$28,$24,$28 ; Dance Right    ($03)
             .byte $78,$44,$42,$a2,$42,$44,$78,$00 ; D *
             .byte $7c,$42,$40,$b8,$40,$42,$7c,$00 ; E *
             .byte $7c,$42,$40,$b8,$40,$40,$40,$00 ; F *
@@ -63,9 +65,9 @@ CharSet:    ; Letters (* used,- reassignable)
             ; Indicators
             .byte $3c,$66,$66,$3c,$10,$1c,$10,$18 ; Key Indicator  ($1b)
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; Dungeon Fill   ($1c)
-            .byte $08,$3e,$7f,$7f,$7f,$7f,$3e,$08 ; Joystick N/S   ($1d)
-            .byte $3c,$7e,$7e,$ff,$7e,$7e,$3c,$00 ; Joystick E/W   ($1e)
-            .byte $1c,$3e,$3e,$3e,$3a,$3a,$3e,$ff ; Door           ($1f)    
+            .byte $34,$74,$14,$f8,$18,$14,$14,$24 ; Dance Up       ($1d)
+            .byte $00,$18,$1c,$10,$7f,$38,$44,$44 ; Dance Down     ($1e)
+            .byte $3c,$7e,$7e,$7e,$7a,$7a,$7e,$7e ; Door           ($1f)    
             .byte $00,$00,$00,$00,$00,$00,$00,$00 ; Space          ($20)
             
             ; Dungeon Walls
