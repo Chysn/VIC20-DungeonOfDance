@@ -2,6 +2,5 @@ xa -l toc -o ./vic/dungeon.bin ./src/dungeon.asm
 printf "\x01\x10" | cat - ./vic/dungeon.bin > ./vic/dungeon.prg
 cp ./vic/dungeon.prg ~/vic20/dungeon
 
-xa -o ./vic/charset.bin ./src/charset.asm
-printf "\x00\x1c" | cat - ./vic/charset.bin > ~/vic20/charset
+ls -la ./vic/dungeon.bin
 

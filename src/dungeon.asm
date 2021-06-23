@@ -52,6 +52,7 @@ CHR_PL_L    = $19               ; Player facing left
 CHR_PL_R    = $1a               ; Player facing right
 CHR_KEY     = $1b               ; Key character
 CHR_FILL    = $1c               ; Dungeon fill (all directions)
+CHR_READY   = $02               ; Ready to dance!
 
 ; Colors
 COL_DOOR    = 3                 ; Door is cyan
@@ -131,6 +132,14 @@ PATT_LEN    = $a5               ; Pattern length
 PATTERN     = $033c             ; Current pattern
 ENC_PTR     = $00               ; Monster encounter save
 
+; Sound Memory
+FX_REG      = $a6               ; Current effect frequency register
+FX_LEN      = $a7               ; Current effect length
+FX_COUNT    = $a8               ; Effect countdown for current effect
+FX_DIR      = $a9               ; Effect direction ($00 = left, $80 = right)
+FX_SPEED    = $aa               ; Effect countdown reset value
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; MAIN PROGRAM
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -207,32 +216,78 @@ leave_char: lda UNDER           ; Replace the character under the player as
 debounce:   jsr Joystick        ; Debounce the joystick
             bne debounce        ; ,,
             beq Main
-    
+ 
+; Quest Over        
+QuestOver:  lda #<GameOver      ; Show Game Over notification
+            ldy #>GameOver      ; ,,
+            jsr PRTSTR          ; ,,
+            lda #110            ; Set screen color to reveal maze
+            sta SCRCOL          ; ,,
+            lda #CHR_OPEN       ; Disappear the player
+            jsr PlotChar        ; ,,
+            jmp Start           ; Back to wait for a new game
+            
+; Level Up
+LevelUp:    lda #6              ; Launch level up effect
+            jsr FXLaunch        ; ,,
+            lda #7              ; Show the rest of the maze
+            jsr WipeColor       ; ,,
+            lda #180            ; Delay for three seconds
+            jsr Delay           ; ,,
+            jmp NextLevel       ; before starting the next level
+     
 ; Use Potion            
 UsePotion:  lda POTIONS
             bne potion_dec
             jmp Main
 potion_dec: dec POTIONS
-            lda #POTION_HP
+            bit TIME_L
+            bvs Transport
+AddHP:      lda #05             ; Launch healing potion effect
+            jsr FXLaunch        ; ,,
+            lda TIME_L          ; Random-ish value
+            and #$07            ; Maximum of 7
+            ora #$02            ; Minimum of 2
             jsr IncHP
+            jsr update_sc
+Transport:  lda #4              ; Launch transport out effect
+            jsr FXLaunch        ; ,,
+            lda #CHR_OPEN       ; Disappear for a bit...
+            sta UNDER           ; ,,
+            jsr PlotChar        ; ,,
+new_x:      jsr BASRND
+            lda RNDNUM
+            cmp #WIDTH
+            bcs new_x
+            sta COOR_X
+new_y:      jsr BASRND
+            lda RNDNUM
+            cmp #HEIGHT
+            bcs new_y
+            sta COOR_Y
+            jsr Coor2Ptr
+            ldx #0
+            lda (PTR,x)
+            cmp #CHR_OPEN
+            bne new_x
+            jsr DrawPlayer
+update_sc:  sec
+            ror CHANGED
             jsr ShowScore
-            jmp debounce
-            
-; Quest Over        
-QuestOver:  lda #<GameOver      ; Show Game Over notification
-            ldy #>GameOver      ; ,,
-            jsr PRTSTR          ; ,,
-            jmp Start           ; Back to wait for a new game
-            
-; Level Clear
-LevelUp:    jmp NextLevel       
-            
+            jmp debounce         
+                        
 ; Interrupt Service Routine            
 ISR:        inc TIME_L
-            bne isr_r
-            inc TIME_M
+            jsr FXService
+            bit HAS_KEY
+            bmi isr_r
+            lda TIME_L
+            rol
+            bcc isr_r
+            lda $9755
+            eor #$07
+            sta $9755
 isr_r:      jmp IRQ
-
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; PLAY MECHANICS
@@ -394,7 +449,9 @@ DecEnergy:  dec ENERGY
             lda #1
             jsr DecHP
             lda #HP_ENERGY
-            jmp IncEnergy
+            jsr IncEnergy
+            lda #7
+            jmp FXLaunch        ; Launch HP to Energy effect
 decen_r:    rts 
 
 ; Increase Hit Points
@@ -420,14 +477,14 @@ inchp_r:    rts
 ; By amount specified in A
 DecHP:      sec                 ; Set the flag indicating HP change
             ror CHANGED         ; ,,
-            sta SCRPAD
-            lda HP
-            sec
-            sbc SCRPAD
-            sta HP
-            bpl dechp_r
-            lda #0
-            sta HP
+            sta SCRPAD          ; Subtract A from HP
+            lda HP              ; ,,
+            sec                 ; ,,
+            sbc SCRPAD          ; ,,
+            sta HP              ; Store HP
+            bpl dechp_r         ; If HP is positive, return
+            lda #0              ; Otherwise, set to 0
+            sta HP              ; ,,
 dechp_r:    rts
 
 ; Increase Experience Points
@@ -462,6 +519,8 @@ enc_item:   sta UNDER           ; Set the item as under the player now
             beq enc_r           ; ,,
             cmp #CHR_POTION     ; Handle potion acquisition
             bne chk_armor       ; ,,
+            lda #0              ; Launch pick-up effect
+            jsr FXLaunch        ; ,,
             inc POTIONS         ; ,,
             lda POTIONS         ; ,,
             cmp #MAX_ITEMS+1    ; Enforce maximum number of potions
@@ -472,6 +531,8 @@ enc_item:   sta UNDER           ; Set the item as under the player now
 potion_r:   jmp RemoveItem      ; If a potion was picked up, remove it
 chk_armor:  cmp #CHR_ARMOR      ; Handle armor acquisition
             bne chk_food        ; ,,
+            lda #0              ; Launch pick-up effect
+            jsr FXLaunch        ; ,,
             inc ARMOR           ; ,,
             lda ARMOR           ; ,,
             cmp #MAX_ITEMS+1    ; Enforce maximum number of armor
@@ -484,6 +545,8 @@ armor_r:    lda #HP_ARMOR       ; Increase HP with new armor
             jmp RemoveItem      ; If armor was picked up, remove it
 chk_food:   cmp #CHR_FOOD       ; Handle food acquisition
             bne enc_monst       ; ,,
+            lda #3              ; Launch eat food effect
+            jsr FXLaunch        ; ,,
             lda #FOOD_ENERGY    ; ,,
             jsr IncEnergy       ; ,,
             jmp RemoveItem      ; If food was picked up, remove it
@@ -539,6 +602,8 @@ DanceOff:   jsr PattMake
             ror HAS_KEY         ;   has been defeated
 win:        jsr LevelMult       ; Increase XP based on level
             jsr IncXP           ; ,,
+            lda #1              ; Launch victory effect
+            jsr FXLaunch        ; ,,
             lda #CHR_OPEN       ; Remove the vanquished foe from the dungeon
             sta UNDER           ; ,,
             ldx #0              ; ,,
@@ -546,14 +611,23 @@ win:        jsr LevelMult       ; Increase XP based on level
             lda #0              ; Reset last encounter so there's a new pattern
             sta LAST_ENC        ;   for the next monster of this kind
             rts
-lose:       lda LAST_ENC        ; Multiply monster strength times level number
+lose:       lda #2              ; Launch defeat effect
+            jsr FXLaunch        ; ,,
+            lda LAST_ENC        ; Multiply monster strength times level number
             jsr LevelMult       ; ,,
             and TIME_L          ; AND with the jiffy clock to possibly remove
             ora LAST_ENC        ;   bits, then ORA with the monster strength for
             jsr DecHP           ;   a minimum HP loss
             lda #CHR_OPEN       ; Clear the cell under the player
             sta UNDER           ; ,,
-            rts
+            lda LAST_ENC        ; If the player was defeated by a wraith, there
+            cmp #2              ;   is the possibility of additional mischief.
+            bne lose_r          ;   About a quarter of the time, the wraith will
+            bit TIME_L          ;   take away the player's map
+            bvc lose_r          ;   ,,
+            lda #0              ;   ,,
+            jsr WipeColor       ;   ,,
+lose_r:     rts
             
 PattMake:   sec                 ; Set encounter to monster level, where
             sbc #CHR_GOBLIN-1   ; 1 = Goblin, 2 = Wraith, 4 = Dragon
@@ -564,9 +638,10 @@ ch_last:    cmp LAST_ENC        ; If the same monster was encountered last,
             bne new_patt        ;   then just return and use the same pattern
             rts                 ;   again
 new_patt:   sta LAST_ENC        ; Set the last encounter
-            clc                 ; Add the level number
-            adc LEVEL           ;   ,,
-            sta PATT_LEN        ; Monster strength + level is the pattern length
+            clc                 ; Length = Monster strength + level - 1
+            adc LEVEL           ; ,,
+            sbc #$00            ; ,, (Carry is clear, so subtracting 1)
+            sta PATT_LEN        ; ,,
             tay                 ; Y is the index, add notes to pattern backwards
             lda #>SEED
             sta P_RAND+1
@@ -587,8 +662,12 @@ PattPlay:   ldy PATT_LEN
             lda Dance,x
             ldx #0
             sta (PTR,x)
-            lda #20
-            jsr Delay
+            lda #21             ; Starting point is 1/3 second delay
+            sec                 ; But it gets a little faster with each 
+            sbc LEVEL           ;   level
+            bne patt_delay      ; This here code here is just a failsafe,
+            lda #10             ;   to prevent a super-long delay
+patt_delay: jsr Delay
             lda #0
             sta VOICEM
             lda #6
@@ -597,10 +676,13 @@ PattPlay:   ldy PATT_LEN
             bne loop
             ; Fall through to PattListen
 
-PattListen: lda #1              ; Set color to white during the listen
+PattListen: lda #CHR_READY      ; Draw the player in walking state
+            ldx #0              ; ,,
+            sta (PTR,x)         ; ,,
+            lda #1              ; Set color to white during the listen
             jsr SetColor        ; ,,
-            jsr Joystick        ; Debounce the joystick before responding
-            bne PattListen      ; ,,
+-debounce:  jsr Joystick        ; Debounce the joystick before responding
+            bne debounce        ; ,,
             ldy PATT_LEN
 -loop:      jsr Joystick
             beq loop
@@ -613,12 +695,14 @@ hit_move:   tax
             lda Dance,x
             ldx #0
             sta (PTR,x)
-            lda #20
-            jsr Delay
+            lda #12             ; Set screen color
+            sta SCRCOL          ; ,,
+-debounce:  jsr Joystick        ; Debounce joystick
+            bne debounce        ; ,,
             lda #0
             sta VOICEM
-lis_deb:    jsr Joystick        ; Debounce joystick
-            bne lis_deb         ; ,,
+            lda #15
+            sta SCRCOL
             dey
             bne loop
             rts            
@@ -967,7 +1051,6 @@ SetupHW:    lda #15             ; Set background color
             sta NMINV           ; ,, 
             lda #>Welcome       ; ,,
             sta NMINV+1         ; ,,
-            rts
             sei                 ; Install the custom ISR
             lda #<ISR           ; ,,
             sta CINV            ; ,,
@@ -977,7 +1060,9 @@ SetupHW:    lda #15             ; Set background color
             rts  
 
 ; Initialize Game
-InitGame:   ldy #0              ; Reset level to 0 (incremented at first level)
+InitGame:   lda #15             ; Screen color changes after game, so reset it
+            sta SCRCOL          ; ,,
+            ldy #0              ; Reset level to 0 (incremented at first level)
             sty LEVEL           ; ,,
             sty XP              ; Starting XP
             sty XP+1            ; ,,
@@ -988,7 +1073,7 @@ InitGame:   ldy #0              ; Reset level to 0 (incremented at first level)
             sty ENERGY          ; ,,
             ldy #HP_ARMOR       ; Set starting HP
             sty HP              ; ,,
-            ldy #$8a            ; Set volume
+            ldy #$0a            ; Set volume
             sty VOLUME          ; ,,
             rts
 
@@ -1036,17 +1121,71 @@ WipeColor:  ldy #0
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Play Direction Tone
 ; With A as the direction (0-3)
-; With Y as the length (in jiffies)
 DirTone:    pha
             tax
             lda Note,x
             sta VOICEM
-            tya
+            lda #$06
             jsr Delay
             lda #0
             sta VOICEM
             pla
             rts
+            
+; Play Next Sound Effect
+; Rotates the 8-bit sound effect register and
+; plays the pitch      
+FXService:  lda FX_LEN          ; Has the sound been launched?
+            beq fx_end          ; If unlaunched, kill voice and return
+            lda #$0a            ; Make sure sound effects are not affected by
+            sta VOLUME          ;   music player's volume changes
+            dec FX_LEN          ; Decrement both length
+            dec FX_COUNT        ;   and countdown
+            bne fx_r            ; If countdown has elapsed,
+            lda FX_SPEED        ;   reset it with the current effect speed
+            sta FX_COUNT        ;   ,,
+            bit FX_DIR          ; Rotate the register, based on the direction
+            bmi fx_right        ;   specified by the direction flag
+fx_left:    lda #$00
+            asl FX_REG          ; Rotate the register left if flag = $00
+            adc FX_REG          ; If carry was set, set bit 0
+            jmp fx_update       ; Update and play the new frequency
+fx_right:   lsr FX_REG          ; Rotate the register right if flag = $80
+            lda FX_REG          ; ,,
+            bcc fx_play         ; If carry was set, set bit 7
+            lda #%10000000      ; ,,
+            ora FX_REG          ; ,,
+fx_update:  sta FX_REG          ; ,,
+fx_play:    ora #$80            ; Gate the high voice
+fx_end:     sta FX_VOICE        ; ,,
+fx_r:       rts 
+
+; Wait for End
+; Do nothing until the current effect ends
+FXWait:     lda FX_LEN
+            bne FXWait
+            beq fx_end
+        
+; Launch Sound Effect
+; Preparations
+;     A - The sound effect index
+FXLaunch:   sei                 ; Don't play anything while setting up
+            asl                 ; Each effect has two bytes in the table
+            tax
+            lda FXTable,x       ; Get the register byte
+            sta FX_DIR          ; Set the direction (only bit 7 will be used)
+            and #$7f            ; Mask away the direction bit to get the 7-bit
+            sta FX_REG          ;   frequency
+            lda FXTable+1,x     ; Get the length byte
+            tax                 ;   and preserve it
+            and #$f0            ; Length is in bits 4-7 of the length byte
+            sta FX_LEN          ;  ,,
+            txa
+            and #$0f            ; Speed (jiffies per rotation) is in the low
+            sta FX_SPEED        ;   nybble of the length byte
+            sta FX_COUNT        ;   ,,
+            cli                 ; Go! 
+            rts            
                        
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; DATA
@@ -1057,7 +1196,8 @@ Intro:      .asc $0d,$0d,$1e,"  2021 JASON JUSTIAN",$0d,$0d
             .asc "      PRESS FIRE",$0d,$00
 Labels:     .asc $1e,$0d," LV@        XP@",$0d," HP@        EN@",$00
 
-GameOver:   .asc $13,$05,$0d,"      QUEST OVER   ",$00
+GameOver:   .asc $13,$05,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d
+            .asc $1d,$1d,$1d,$1d,$1d," QUEST OVER ",$00
 
 ; Direction tables
 JoyTable:   .byte 0,$04,$80,$08,$10,$20            ; Corresponding direction bit
@@ -1068,7 +1208,7 @@ BitNumber:  .byte %00000001, %00000010, %00000100, %00001000
 
 ; Configuration for items and monters per level
 ItemChar:   .byte CHR_WRAITH,CHR_GOBLIN,CHR_FOOD,CHR_ARMOR,CHR_POTION
-ItemCount:  .byte 3,6,5,1,3
+ItemCount:  .byte 4,8,6,1,3
 
 ; Search pattern for automap, starting from index 7 (PTR minus 23)
 Autopatt:   .byte 1,1,20,2,20,1,1,0
@@ -1079,8 +1219,159 @@ ItemColors: .byte COL_POTION,COL_ARMOR,COL_FOOD,COL_GOBLIN,COL_WRAITH,COL_DRAGON
 ; Note Table
 ; Selections from chromatic scale (tonic, major 3rd, 5th, 6th)
 ; 194,197,201,204,207,209,212,214,217,219,221,223,225
-Note:       .byte 0,194,207,214,219
+Note:       .byte 0,219,207,194,214
 
 ; Dance Table
 ; Dance moves based on direction
-Dance:      .byte 0,$1d,$03,$1e,$02
+Dance:      .byte 0,$1d,$0d,$1e,$0b
+
+; Sound effects for the sound effects player
+; Each effect has four parameters (DFFFFFFF LLLLSSSS)
+;   (1) Bit 7 (D) of the first byte is the direction
+;       * Unset=shift left, or a rising sound 
+;       * Set=shift right, or a falling sound
+;   (2) Bits 0-6 (F) of the first byte is the frequency register
+;   (3) High nybble of the second byte (L) is the length in jiffies x 16
+;       * Between approx. 1/4 sec and 4 sec in length
+;   (4) Low nybble of second byte (S) is speed in jiffies
+FXTable:    .byte $ef,$11       ; 0- Item Pickup
+            .byte $09,$13       ; 1- Danceoff won
+            .byte $d0,$13       ; 2- Danceoff lost
+            .byte $01,$25       ; 3- Eat food
+            .byte $d0,$23       ; 4- Transported
+            .byte $0f,$21       ; 5- Healing potion
+            .byte $3c,$48       ; 6- Level victory tune
+            .byte $55,$34       ; 7- HP to Energy alert
+            
+; Pad to 3583
+Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; CUSTOM CHARACTER SET
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; The character set must start at $1C00. If you change anything
+; anywhere, you must account for this. The easiest way is to use
+; padding bytes immediately before this character data.
+;
+; The easiest way to tell if you've done this right is to
+; make sure that the object code is exactly 3583 bytes. This is
+; a reliable method as long as you don't add anything AFTER this
+; character data.
+;
+CharSet:    ; Letters (* used,- reassignable)
+            ; DUNGEON OF DANCE
+            ; 2021 JASON JUSTIAN
+            ; PRESS FIRE
+            ; LV~ HP~ XP~
+            ; QUEST OVER
+            .byte $00,$00,$20,$10,$00,$20,$10,$00 ; Colon
+            .byte $10,$28,$44,$54,$82,$fe,$82,$00 ; A *
+            ;.byte $fc,$42,$62,$9c,$62,$42,$fc,$00 ; B -
+            .byte $38,$38,$10,$7c,$92,$38,$44,$44 ; Ready to go!   ($02)
+            .byte $3a,$46,$82,$90,$80,$42,$3c,$00 ; C *
+            .byte $78,$44,$42,$a2,$42,$44,$78,$00 ; D *
+            .byte $7c,$42,$40,$b8,$40,$42,$7c,$00 ; E *
+            .byte $7c,$42,$40,$b8,$40,$40,$40,$00 ; F *
+            .byte $38,$44,$80,$9c,$8a,$44,$3c,$00 ; G *
+            .byte $82,$82,$92,$ee,$92,$82,$82,$00 ; H *
+            .byte $10,$10,$28,$28,$28,$10,$10,$00 ; I *
+            .byte $04,$0a,$0a,$04,$04,$04,$08,$30 ; J *
+            ;.byte $a8,$88,$90,$e0,$90,$88,$84,$03 ; K -
+            .byte $18,$38,$08,$78,$08,$14,$24,$14 ; Dance Left     ($0b)
+            .byte $40,$40,$a0,$a0,$40,$42,$7c,$00 ; L *
+            ;.byte $82,$d6,$ba,$92,$aa,$92,$82,$00 ; M *
+            .byte $18,$1c,$10,$1e,$10,$28,$24,$28 ; Dance Right    ($0d)
+            .byte $c2,$aa,$a2,$92,$8a,$aa,$86,$00 ; N *
+            .byte $38,$44,$92,$ba,$92,$44,$38,$00 ; O *
+            .byte $fc,$42,$a2,$a2,$7c,$40,$40,$00 ; P *
+            .byte $38,$44,$92,$82,$92,$54,$38,$10 ; Q *
+            .byte $fc,$42,$a2,$a2,$7c,$48,$44,$03 ; R *
+            .byte $7c,$82,$90,$6c,$12,$82,$7c,$00 ; S *
+            .byte $7c,$92,$10,$28,$28,$10,$10,$00 ; T *
+            .byte $c6,$92,$82,$82,$82,$82,$7c,$00 ; U *
+            .byte $c6,$92,$82,$82,$44,$28,$10,$00 ; V *
+            .byte $a2,$aa,$a2,$92,$4c,$28,$10,$00 ; W -
+            .byte $82,$82,$54,$28,$54,$82,$82,$00 ; X *
+            ;.byte $c6,$82,$54,$28,$28,$10,$10,$00 ; Y -
+            ;.byte $7e,$84,$18,$6c,$30,$42,$fc,$00 ; Z -
+            .byte $0c,$1c,$04,$0f,$14,$06,$0b,$19 ; Player walking - left
+            .byte $30,$38,$20,$f0,$28,$60,$d0,$98 ; Player walking - right
+            
+            ; Indicators
+            .byte $3c,$66,$66,$3c,$10,$1c,$10,$18 ; Key Indicator  ($1b)
+            .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; Dungeon Fill   ($1c)
+            .byte $b2,$ba,$92,$7c,$10,$1c,$24,$44 ; Dance Up       ($1d)
+            .byte $00,$38,$38,$10,$7c,$92,$38,$c6 ; Dance Down     ($1e)
+            .byte $3c,$7e,$7e,$7e,$7a,$7a,$7e,$7e ; Door           ($1f)    
+            .byte $00,$00,$00,$00,$00,$00,$00,$00 ; Space          ($20)
+            
+            ; Dungeon Walls
+            .byte $00,$c3,$ef,$ff,$ff,$ff,$ff,$ff ; N    (0001) "
+            .byte $fe,$fe,$fe,$f8,$fc,$fc,$fe,$fe ; E    (0010) #
+            .byte $00,$24,$e6,$fc,$f8,$fe,$fe,$fc ; NE   (0011) $
+            .byte $ff,$ff,$ff,$ff,$ff,$df,$1d,$00 ; S    (0100) %
+            .byte $00,$83,$c7,$f7,$ff,$df,$9c,$00 ; NS   (0101) &
+            .byte $fe,$fc,$fe,$fa,$f8,$fc,$dc,$00 ; SE   (0110) '
+            .byte $00,$38,$f8,$fc,$fe,$fe,$dc,$00 ; NSE  (0111) (
+            .byte $7f,$7f,$1f,$3f,$3f,$3f,$7f,$7f ; W    (1000) )
+            .byte $00,$70,$79,$5d,$1f,$3f,$7f,$7f ; NW   (1001) *
+            .byte $3c,$38,$38,$38,$7c,$1c,$3c,$7c ; EW   (1010) +
+            .byte $00,$3c,$3e,$7e,$3c,$78,$7a,$3e ; NSW  (1011) ,
+            .byte $7f,$3f,$1f,$1f,$7f,$77,$07,$00 ; EW   (1100) -
+            .byte $00,$13,$3f,$7f,$7f,$7d,$31,$00 ; NEW  (1101) .
+            .byte $7e,$7e,$3e,$3e,$7c,$7c,$38,$00 ; ESW  (1110) /
+            .byte $00,$1c,$3e,$7e,$7e,$7c,$1c,$00 ; All  (1111) !
+            
+            ; Digits
+            .byte $3a,$44,$8a,$92,$a2,$44,$b8,$00 ; 0
+            .byte $38,$10,$10,$10,$10,$10,$38,$00 ; 1 
+            .byte $3c,$42,$02,$04,$18,$22,$7c,$00 ; 2 
+            .byte $3c,$42,$02,$1c,$02,$02,$04,$18 ; 3 
+            .byte $80,$48,$68,$4a,$7c,$08,$08,$00 ; 4
+            .byte $7c,$42,$40,$7c,$02,$02,$04,$18 ; 5
+            .byte $1e,$20,$78,$84,$92,$82,$7c,$00 ; 6
+            .byte $7e,$84,$08,$3c,$10,$20,$40,$00 ; 7
+            .byte $7c,$82,$92,$44,$38,$44,$7c,$00 ; 8
+            .byte $7c,$82,$92,$82,$7e,$02,$7c,$00 ; 9
+            
+            ; Items
+            .byte $00,$00,$1c,$1c,$08,$3e,$3e,$1c ; Potion         ($3a)
+            .byte $41,$63,$7f,$77,$63,$36,$1c,$08 ; Armor          ($3b)
+            .byte $00,$12,$24,$12,$00,$3e,$3e,$1c ; Food           ($3c)
+            
+            ; Monsters
+            .byte $01,$3d,$3d,$19,$3e,$58,$18,$24 ; Goblin         ($3d)
+            .byte $1c,$be,$aa,$be,$ff,$14,$2a,$55 ; Wraith         ($3e)
+            .byte $2c,$66,$e7,$2f,$3e,$3c,$67,$88 ; Dragon         ($3f)
