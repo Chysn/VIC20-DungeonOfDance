@@ -57,7 +57,7 @@ CHR_READY   = $02               ; Ready to dance!
 ; Colors
 COL_DOOR    = 3                 ; Door is cyan
 COL_WALL    = 7                 ; Wall is yellow
-COL_POTION  = 4                 ; Potion is purple
+COL_POTION  = 1                 ; Potion is white
 COL_ARMOR   = 1                 ; Armor is white
 COL_FOOD    = 5                 ; Food is green
 COL_GOBLIN  = 4                 ; Goblin is purple
@@ -414,7 +414,7 @@ xp_zero:    lda #"0"            ; Multiply XP by 10. Why not?
             ldx #4              ; ,,
             clc                 ; ,,
             jsr PLOT            ; ,,
-            lda #$9c            ; Purple
+            lda #$05            ; White
             jsr $ffd2           ; ,,
             ldy POTIONS         ; ,,
             beq no_potion       ; ,,
@@ -727,8 +727,8 @@ hit_move:   tax
             lda Dance,x
             ldx #0
             sta (PTR,x)
-            lda #12             ; Set screen color
-            sta SCRCOL          ; ,,
+            lda #13             ; Set screen color to indicate successful
+            sta SCRCOL          ;   move
 -debounce:  jsr Joystick        ; Debounce joystick
             bne debounce        ; ,,
             lda #0
@@ -1245,7 +1245,7 @@ BitNumber:  .byte %00000001, %00000010, %00000100, %00001000
 
 ; Configuration for items and monters per level
 ItemChar:   .byte CHR_WRAITH,CHR_GOBLIN,CHR_FOOD,CHR_ARMOR,CHR_POTION
-ItemCount:  .byte 4,8,6,1,3
+ItemCount:  .byte 3,8,6,1,3
 
 ; Search pattern for automap, starting from index 7 (PTR minus 23)
 Autopatt:   .byte 1,1,20,2,20,1,1,0
@@ -1402,11 +1402,11 @@ CharSet:    ; Letters (* used,- reassignable)
             .byte $7c,$82,$92,$82,$7e,$02,$7c,$00 ; 9
             
             ; Items
-            .byte $00,$00,$1c,$1c,$08,$3e,$3e,$1c ; Potion         ($3a)
-            .byte $41,$63,$7f,$77,$63,$36,$1c,$08 ; Armor          ($3b)
-            .byte $00,$12,$24,$12,$00,$3e,$3e,$1c ; Food           ($3c)
+            .byte $00,$1c,$08,$08,$3e,$3e,$3e,$1c ; Potion         ($3a)
+            .byte $00,$41,$6b,$7f,$77,$63,$36,$1c ; Armor          ($3b)
+            .byte $00,$04,$08,$3c,$7e,$7e,$3c,$42 ; Food           ($3c)
             
             ; Monsters
             .byte $01,$3d,$3d,$19,$3e,$58,$18,$24 ; Goblin         ($3d)
-            .byte $1c,$be,$aa,$be,$ff,$14,$2a,$55 ; Wraith         ($3e)
+            .byte $00,$1c,$3e,$aa,$fe,$76,$1c,$00 ; Wraith         ($3e)
             .byte $2c,$66,$e7,$2f,$3e,$3c,$67,$88 ; Dragon         ($3f)
