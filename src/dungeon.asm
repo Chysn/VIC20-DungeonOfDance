@@ -31,11 +31,11 @@ HEIGHT      = 17                ; Size of maze, with each cell having a "wall"
 WIDTH       = 22                ; surrounding it. So a 16x16 maze has 8x8 cells
 Y_OFFSET    = 6                 ; Y offset of maze
 SEED        = $c100             ; Start of pseudo-random data table
-HP_ARMOR    = 4                 ; Max HP per armor
+HP_ARMOR    = 5                 ; Max HP per armor
 ST_ENERGY   = 200               ; Starting energy (loss of 1 per move)
 HP_ENERGY   = 50                ; Energy gained per HP consumed
 FOOD_ENERGY = 50                ; Energy gained per food found
-POTION_HP   = 8                 ; HP gained per potion used
+POTION_HP   = 10                ; HP gained per potion used
 MAX_ITEMS   = 8                 ; Maximum armor and potions (each)
 
 ; Characters
@@ -82,6 +82,8 @@ NMINV       = $0318             ; Release NMI vector
 SCREEN      = $1e00             ; Screen character memory (unexpanded)
 COLOR       = $9600             ; Screen color memory (unexpanded)
 IRQ         = $eb12             ; System ISR return point
+HORIZ       = $9000             ; Screen position
+VERT        = $9001             ; ,,
 VICCR5      = $9005             ; Character map register
 VOICEH      = $900c             ; High sound register
 VOICEM      = $900b             ; Mid sound register
@@ -213,7 +215,7 @@ leave_char: lda UNDER           ; Replace the character under the player as
             pla                 ; Play the tone in A
             ldy #8              ; ,,
             jsr DirTone         ; ,,
-debounce:   jsr Joystick        ; Debounce the joystick
+-debounce:  jsr Joystick        ; Debounce the joystick
             bne debounce        ; ,,
             beq Main
  
@@ -232,7 +234,11 @@ LevelUp:    lda #6              ; Launch level up effect
             jsr FXLaunch        ; ,,
             lda #7              ; Show the rest of the maze
             jsr WipeColor       ; ,,
-            lda #180            ; Delay for three seconds
+            lda #5              ; Earn 5XP per level
+            jsr LevelMult       ; ,,
+            jsr IncXP           ; ,,
+            jsr ShowScore       ; Show the score with the new XP
+            lda #180            ; Delay for 3 seconds
             jsr Delay           ; ,,
             jmp NextLevel       ; before starting the next level
      
@@ -245,11 +251,9 @@ potion_dec: dec POTIONS
             bvs Transport
 AddHP:      lda #05             ; Launch healing potion effect
             jsr FXLaunch        ; ,,
-            lda TIME_L          ; Random-ish value
-            and #$07            ; Maximum of 7
-            ora #$02            ; Minimum of 2
-            jsr IncHP
-            jsr update_sc
+            lda #POTION_HP      ; Add HP based on configuration value
+            jsr IncHP           ; ,,
+            jsr update_sc       ; Update and show score
 Transport:  lda #4              ; Launch transport out effect
             jsr FXLaunch        ; ,,
             lda #CHR_OPEN       ; Disappear for a bit...
@@ -282,7 +286,7 @@ ISR:        inc TIME_L
             bit HAS_KEY
             bmi isr_r
             lda TIME_L
-            ror
+            rol
             bcc isr_r
             lda $9755
             eor #$07
@@ -341,6 +345,7 @@ DragDoor:   lda #CHR_DOOR       ; Place the door, always in the same position
             sta $97e3           ; ,,
             bit HAS_KEY         ; If the dragon has been defeated, do not
             bmi dragdoor_r      ;   display
+            bvs dragdoor_r      ;   ,,
             lda #CHR_DRAGON     ; Place the dragon, always in the same position
             sta $1f55           ; ,,
             lda #COL_DRAGON     ; Make the dragon red
@@ -385,9 +390,15 @@ lev_num:    ldy #4              ; Show the level number
             ldx #2              ; ,,
             clc                 ; ,,
             jsr PLOT            ; ,,
-            ldx XP              ; ,,
+            lda XP              ; (Check if XP is zero. If it is, only show
+            bne get_xp          ;   the decorative multiplier below
+            lda XP+1            ;   ,,
+            beq xp_zero         ;   ,,)
+get_xp:     ldx XP              ; ,,
             lda XP+1            ; ,,
             jsr PRTFIX          ; ,,
+xp_zero:    lda #"0"            ; Multiply XP by 10. Why not?
+            jsr CHROUT          ; ,,
             ldy #1              ; Show Armor
             ldx #4              ; ,,
             clc                 ; ,,
@@ -626,6 +637,14 @@ reset_enc:  lda #0              ; Reset last encounter so there's a new pattern
             rts
 lose:       lda #2              ; Launch defeat effect
             jsr FXLaunch        ; ,,
+            inc HORIZ           ; Rock the screen a bit, because you lost
+            jsr Delay1          ; ,,
+            dec VERT            ; ,,
+            jsr Delay1          ; ,,
+            dec HORIZ           ; ,,
+            jsr Delay1          ; ,,
+            inc VERT            ; ,,
+            jsr Delay1          ; ,,
             lda LAST_ENC        ; Multiply monster strength times level number
             jsr LevelMult       ; ,,
             and TIME_L          ; AND with the jiffy clock to possibly remove
@@ -1043,6 +1062,9 @@ RandDir:    ldx #0              ; Get the next pseudorandom number
 randdir_r:  and #$03            ; Constrain the value to a direction
             rts
 
+Delay1:     lda #1
+            ; Fall through to Delay
+
 ; Delay A Jiffies
 Delay:      clc
             adc TIME_L
@@ -1289,8 +1311,7 @@ Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
