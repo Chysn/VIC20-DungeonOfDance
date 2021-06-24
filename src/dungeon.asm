@@ -611,10 +611,12 @@ DanceOff:   jsr PattMake
             bne win             ; ,,
             sec                 ; If so, set the HAS_KEY flag when the dragon
             ror HAS_KEY         ;   has been defeated
-win:        jsr LevelMult       ; Increase XP based on level
-            jsr IncXP           ; ,,
-            lda #1              ; Launch victory effect
-            jsr FXLaunch        ; ,,
+            lda #8              ; Launch Has Key sound effect
+            bne victory_fx      ; ,, (bypass normal victory sound)
+win:        lda #1              ; Launch victory effect
+victory_fx: jsr FXLaunch        ; ,,
+inc_xp:     jsr LevelMult       ; Increase XP based on level
+            jsr IncXP           ; ,,            
             lda #CHR_OPEN       ; Remove the vanquished foe from the dungeon
             sta UNDER           ; ,,
             ldx #0              ; ,,
@@ -637,6 +639,8 @@ reset_enc:  lda #0              ; Reset last encounter so there's a new pattern
             rts
 lose:       lda #2              ; Launch defeat effect
             jsr FXLaunch        ; ,,
+            lda #10             ; Red border = defeat
+            sta SCRCOL          ; ,,
             inc HORIZ           ; Rock the screen a bit, because you lost
             jsr Delay1          ; ,,
             dec VERT            ; ,,
@@ -659,7 +663,9 @@ lose:       lda #2              ; Launch defeat effect
             bvc lose_r          ;   ,,
             lda #0              ;   ,,
             jsr WipeColor       ;   ,,
-lose_r:     rts
+lose_r:     lda #15             ; Put screen color back
+            sta SCRCOL          ; ,,
+            rts
             
 PattMake:   sec                 ; Set encounter to monster level, where
             sbc #CHR_GOBLIN-1   ; 1 = Goblin, 2 = Wraith, 4 = Dragon
@@ -1279,6 +1285,7 @@ FXTable:    .byte $ef,$11       ; 0- Item Pickup
             .byte $0f,$21       ; 5- Healing potion
             .byte $3c,$48       ; 6- Level victory tune
             .byte $55,$34       ; 7- HP to Energy alert
+            .byte $08,$69       ; 8- Has Key
             
 ; Pad to 3583
 Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -1310,8 +1317,7 @@ Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
