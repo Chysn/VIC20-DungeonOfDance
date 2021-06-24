@@ -23,19 +23,20 @@
 Launcher:   .byte $0b,$10,$2a,$00,$9e,$34,$31,$31
             .byte $30,$00,$00,$00,$00
 
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; LABEL DEFINITIONS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Game Configuration
 HEIGHT      = 17                ; Size of maze, with each cell having a "wall"
-WIDTH       = 22                ; surrounding it. So a 16x16 maze has 8x8 cells
+WIDTH       = 22                ;   surrounding it. 16x16 maze has 8x8 cells
 Y_OFFSET    = 6                 ; Y offset of maze
 SEED        = $c100             ; Start of pseudo-random data table
 HP_ARMOR    = 5                 ; Max HP per armor
 ST_ENERGY   = 200               ; Starting energy (loss of 1 per move)
 HP_ENERGY   = 50                ; Energy gained per HP consumed
 FOOD_ENERGY = 50                ; Energy gained per food found
-POTION_HP   = 10                ; HP gained per potion used
+POTION_HP   = 10                ; Max HP gained per potion used
 MAX_ITEMS   = 8                 ; Maximum armor and potions (each)
 
 ; Characters
@@ -65,20 +66,20 @@ COL_WRAITH  = 1                 ; Wraith is white
 COL_DRAGON  = 2                 ; Dragon is red
 
 ; Constants
-NORTH       = 1
-EAST        = 2
-SOUTH       = 4
-WEST        = 8
-JS_NORTH    = 1
-JS_EAST     = 2
-JS_SOUTH    = 3
-JS_WEST     = 4
-JS_FIRE     = 5
+NORTH       = 1                 ; Compass Points, used in bitfields for
+EAST        = 2                 ;   specifying GROUPS of directions
+SOUTH       = 4                 ;   ,,
+WEST        = 8                 ;   ,,
+JS_NORTH    = 1                 ; Direction codes, used by the joystick
+JS_EAST     = 2                 ;   routine, and in various tables that
+JS_SOUTH    = 3                 ;   index a specific direction
+JS_WEST     = 4                 ;   ,,
+JS_FIRE     = 5                 ; Oh, and Fire, which in this game means "drink"
 
 ; System Resources
 CINV        = $0314             ; ISR vector
 NMINV       = $0318             ; Release NMI vector
--NMINV     = $fffe              ; Development NMI non-vector (uncomment for dev)
+;-NMINV     = $fffe             ; Development NMI non-vector (uncomment for dev)
 SCREEN      = $1e00             ; Screen character memory (unexpanded)
 COLOR       = $9600             ; Screen color memory (unexpanded)
 IRQ         = $eb12             ; System ISR return point
@@ -186,10 +187,10 @@ Main:       bit HAS_KEY         ; Check for level completion with bit 6 of
             bvs LevelUp         ;   HAS_KEY
             lda HP              ; Check for player death
             beq QuestOver       ; ,,
-read_js:    jsr Joystick
-            beq read_js
-            cmp #JS_FIRE
-            beq UsePotion
+read_js:    jsr Joystick        ; Wait for joystick
+            beq read_js         ; ,,
+            cmp #JS_FIRE        ; Use a potion if fire button was pressed
+            beq UsePotion       ; ,,
             pha                 ; Save direction
             ldy #CHR_PL_R       ; Set player graphic (left or right-facing)
             cmp #JS_EAST        ;   if the player moves east or west.
@@ -243,12 +244,12 @@ LevelUp:    lda #6              ; Launch level up effect
             jmp NextLevel       ; before starting the next level
      
 ; Use Potion            
-UsePotion:  lda POTIONS
-            bne potion_dec
-            jmp Main
-potion_dec: dec POTIONS
-            bit TIME_L
-            bvs Transport
+UsePotion:  lda POTIONS         ; Are there any potions to drink?
+            bne potion_dec      ; If so, drink one
+            jmp Main            ; Otherwise, back to Main
+potion_dec: dec POTIONS         ; Take away one potion
+            bit TIME_L          ; Check bit 6 of TIME_L, which should be lit up
+            bvs Transport       ;   25% of the time. In this case, teleport
 AddHP:      lda #05             ; Launch healing potion effect
             jsr FXLaunch        ; ,,
             lda #POTION_HP      ; Add HP based on configuration value
@@ -259,39 +260,41 @@ Transport:  lda #4              ; Launch transport out effect
             lda #CHR_OPEN       ; Disappear for a bit...
             sta UNDER           ; ,,
             jsr PlotChar        ; ,,
-new_x:      jsr BASRND
-            lda RNDNUM
-            cmp #WIDTH
-            bcs new_x
-            sta COOR_X
-new_y:      jsr BASRND
-            lda RNDNUM
-            cmp #HEIGHT
-            bcs new_y
-            sta COOR_Y
-            jsr Coor2Ptr
-            ldx #0
-            lda (PTR,x)
-            cmp #CHR_OPEN
-            bne new_x
-            jsr DrawPlayer
-update_sc:  sec
-            ror CHANGED
-            jsr ShowScore
+new_x:      jsr BASRND          ; Find a new X location...
+            lda RNDNUM          ; ,,
+            cmp #WIDTH          ; ...until it's in range
+            bcs new_x           ; ,,
+            sta COOR_X          ; Set it
+new_y:      jsr BASRND          ; Find a new Y location...
+            lda RNDNUM          ; ,,
+            cmp #HEIGHT         ; ...until it's in range
+            bcs new_y           ; ,,
+            sta COOR_Y          ; Set it
+            jsr Coor2Ptr        ; Convert new coordinates to 16-bit pointer
+            ldx #0              ; See what's currently there
+            lda (PTR,x)         ; ,,
+            cmp #CHR_OPEN       ; If the new location is occupied, then try
+            bne new_x           ;   again
+            jsr DrawPlayer      ; If unoccupied, draw the player there
+update_sc:  sec                 ; Mark the scoresheet changed, so that the
+            ror CHANGED         ;   number of potions in inventory is refreshed
+            jsr ShowScore       ; Show the score header
             jmp debounce         
                         
 ; Interrupt Service Routine            
-ISR:        inc TIME_L
-            jsr FXService
-            bit HAS_KEY
-            bmi isr_r
-            lda TIME_L
-            rol
-            bcc isr_r
-            lda $9755
-            eor #$07
-            sta $9755
+ISR:        inc TIME_L          ; Circumventing BASIC's clock, so advance it
+            jsr FXService       ; Play any sound effects that are going on
+            bit HAS_KEY         ; If the dragon hasn't already been defeated,
+            bmi isr_r           ;   flash the dragon half the time
+            bit TIME_L          ;   ,,
+            bmi flash_dr        ;   ,,
+            lda #COL_DRAGON     ; The other half of the time, keep the dragon
+            bne paint_dr        ;   red
+flash_dr:   lda $9755           ; Get the dragon's current color
+            eor #$07            ; 010 => 101, and back again
+paint_dr:   sta $9755           ; ,,
 isr_r:      jmp IRQ
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; PLAY MECHANICS
@@ -593,6 +596,7 @@ mult_xp:    adc SCRPAD
             bne mult_xp
             rts
 
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; DANCE OFF (COMBAT) ROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;     
@@ -642,13 +646,21 @@ lose:       lda #2              ; Launch defeat effect
             lda #10             ; Red border = defeat
             sta SCRCOL          ; ,,
             inc HORIZ           ; Rock the screen a bit, because you lost
-            jsr Delay1          ; ,,
+            jsr Delay2          ; ,,
             dec VERT            ; ,,
-            jsr Delay1          ; ,,
+            jsr Delay2          ; ,,
             dec HORIZ           ; ,,
-            jsr Delay1          ; ,,
+            jsr Delay2          ; ,,
             inc VERT            ; ,,
-            jsr Delay1          ; ,,
+            jsr Delay2          ; ,,
+            dec HORIZ           ; ,,
+            jsr Delay2          ; ,,
+            inc HORIZ           ; ,,
+            jsr Delay2          ; ,,
+            inc VERT            ; ,,
+            jsr Delay2          ; ,,
+            dec VERT            ; ,,
+            jsr Delay2          ; ,,
             lda LAST_ENC        ; Multiply monster strength times level number
             jsr LevelMult       ; ,,
             and TIME_L          ; AND with the jiffy clock to possibly remove
@@ -706,6 +718,9 @@ PattPlay:   ldy PATT_LEN
             bne patt_delay      ; This here code here is just a failsafe,
             lda #10             ;   to prevent a super-long delay
 patt_delay: jsr Delay
+            ldx #0              ; Return to Ready position after each move,
+            lda #CHR_READY      ;   so the game is easier to play without
+            sta (PTR,x)         ;   sound
             lda #0
             sta VOICEM
             lda #6
@@ -737,6 +752,9 @@ hit_move:   tax
             sta SCRCOL          ;   move
 -debounce:  jsr Joystick        ; Debounce joystick
             bne debounce        ; ,,
+            ldx #0              ; Back to the Ready position after a move
+            lda #CHR_READY      ; ,,
+            sta (PTR,x)         ; ,,
             lda #0
             sta VOICEM
             lda #15
@@ -744,9 +762,10 @@ hit_move:   tax
             dey
             bne loop
             rts            
+    
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; MAZE ROUTINES
+; MAZE GENERATOR ROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Initialize Maze
 MakeMaze:   lda #$0b            ; Push 9,b as the X and Y coordinate as the
@@ -866,17 +885,19 @@ next_cell:  inc COOR_Y          ; Continue iterating across all characters in
             bne loop            ;   ,,
             rts
             
-; Populate Items                  
-Populate:   ldy #$04
-next_item:  lda ItemCount,y
-            sta SCRPAD
--loop:      lda ItemChar,y
-            sec
-            jsr Position
-            dec SCRPAD
-            bne loop
-            dey
-            bpl next_item
+; Populate Items
+; Based on an item and count table, populate goblins, wraiths, armor, food, and
+; "healing" potions.                  
+Populate:   ldy #$04            ; Five items in the table
+next_item:  lda ItemCount,y     ; Get the count for the item at the index
+            sta SCRPAD          ; ,,
+-loop:      lda ItemChar,y      ; Get the screen code for the item at the index
+            sec                 ; Place it on the screen. SEC means to retry if
+            jsr Position        ;   the item is placed over another item
+            dec SCRPAD          ; Decrement the count and loop if there's more
+            bne loop            ;   to do
+            dey                 ; Decrement item index and get the next item if
+            bpl next_item       ;   there's more to do
             rts
   
 ; Check Passageways                      
@@ -1023,7 +1044,8 @@ unavail:    clc                 ; Clear carry means unavailable
             rts                 ; ,,
 avail:      sec                 ; Set carry means available
             rts                 ; ,,
-  
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1068,7 +1090,7 @@ RandDir:    ldx #0              ; Get the next pseudorandom number
 randdir_r:  and #$03            ; Constrain the value to a direction
             rts
 
-Delay1:     lda #1
+Delay2:     lda #2
             ; Fall through to Delay
 
 ; Delay A Jiffies
@@ -1077,7 +1099,8 @@ Delay:      clc
 -loop:      cmp TIME_L
             bne loop
             rts    
-            
+
+       
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; SETUP ROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1158,7 +1181,8 @@ WipeColor:  ldy #0
             dey
             bne loop
             rts
-            
+
+      
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; SOUND ROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1229,7 +1253,8 @@ FXLaunch:   sei                 ; Don't play anything while setting up
             sta FX_COUNT        ;   ,,
             cli                 ; Go! 
             rts            
-                       
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1285,7 +1310,7 @@ FXTable:    .byte $ef,$11       ; 0- Item Pickup
             .byte $0f,$21       ; 5- Healing potion
             .byte $3c,$48       ; 6- Level victory tune
             .byte $55,$34       ; 7- HP to Energy alert
-            .byte $08,$69       ; 8- Has Key
+            .byte $08,$3a       ; 8- Has Key
             
 ; Pad to 3583
 Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -1316,8 +1341,7 @@ Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
