@@ -1435,9 +1435,9 @@ CharSet:    ; Letters (* used,- reassignable)
             .byte $7c,$82,$92,$82,$7e,$02,$7c,$00 ; 9
             
             ; Items
-            .byte $00,$1c,$08,$08,$3e,$3e,$3e,$1c ; Potion         ($3a)
-            .byte $00,$22,$2a,$3e,$2a,$36,$1c,$00 ; Armor          ($3b)
-            .byte $00,$04,$08,$3c,$7e,$7e,$3c,$42 ; Food           ($3c)
+            .byte $00,$00,$1c,$08,$1c,$3e,$3e,$1c ; Potion         ($3a)
+            .byte $00,$00,$22,$2a,$3e,$2a,$36,$1c ; Armor          ($3b)
+            .byte $00,$12,$24,$12,$00,$3e,$3e,$1c ; Food           ($3c)
             
             ; Monsters
             .byte $01,$3d,$3d,$19,$3e,$58,$18,$24 ; Goblin         ($3d)
