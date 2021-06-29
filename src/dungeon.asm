@@ -54,6 +54,12 @@ CHR_PL_R    = $1a               ; Player facing right
 CHR_KEY     = $1b               ; Key character
 CHR_FILL    = $1c               ; Dungeon fill (all directions)
 CHR_READY   = $02               ; Ready to dance!
+CHR_BANISH  = $17               ; Monster is banished
+
+; Monsters
+GOBLIN      = 1                 ; Goblin
+WRAITH      = 2                 ; Wraith
+DRAGON      = 3                 ; Dragon
 
 ; Colors
 COL_DOOR    = 3                 ; Door is cyan
@@ -136,6 +142,9 @@ PATT_LEN    = $a5               ; Pattern length
 PATTERN     = $033c             ; Current pattern
 ENC_PTR     = $00               ; Monster encounter save
 LAST_HORIZ  = $01               ; Last horizontal movement
+DRUMS_ON    = $02               ; Music player on
+DRUMS_REG   = $03               ; Music shift register (2 bytes)
+DRUMS_COUNT = $08               ; Music countdown
 
 ; Sound Memory
 FX_REG      = $a6               ; Current effect frequency register
@@ -299,7 +308,7 @@ update_sc:  sec                 ; Mark the scoresheet changed, so that the
 ISR:        inc TIME_L          ; Circumventing BASIC's clock, so advance it
             jsr FXService       ; Play any sound effects that are going on
             lda KEYSTAT         ; If the dragon hasn't already been defeated,
-            bne isr_r           ;   flash the dragon half the time
+            bne drums           ;   flash the dragon half the time
             bit TIME_L          ;   ,,
             bmi flash_dr        ;   ,,
             lda #COL_DRAGON     ; The other half of the time, keep the dragon
@@ -307,6 +316,9 @@ ISR:        inc TIME_L          ; Circumventing BASIC's clock, so advance it
 flash_dr:   lda $9755           ; Get the dragon's current color
             eor #$07            ; 010 => 101, and back again
 paint_dr:   sta $9755           ; ,,
+drums:      bit DRUMS_ON        ; Handle drum player
+            bpl isr_r           ; ,,
+            jsr DrumServ        ; ,,
 isr_r:      jmp IRQ
 
 
@@ -325,19 +337,19 @@ DrawPlayer: jsr ShowScore       ; Show changed values
 
 ; Automap
 ; All 8 cells adjacent to PTR
-Automap:    lda PTR
-            sec
-            sbc #23
-            sta PTR
-            bcs light
-            dec PTR+1
-light:      ldy #7
--loop:      lda Autopatt,y
-            clc
-            adc PTR
-            sta PTR
-            bcc find_col
-            inc PTR+1
+Automap:    lda PTR             ; Back the pointer up to the upper left
+            sec                 ;   corner of the surrounding space
+            sbc #23             ;   ,,
+            sta PTR             ;   ,,
+            bcs light           ;   ,,
+            dec PTR+1           ;   ,,
+light:      ldy #7              ; The Autopatt table adds numbers of cells
+-loop:      lda Autopatt,y      ;   to PTR surrounding the player
+            clc                 ;   ,,
+            adc PTR             ;   ,,
+            sta PTR             ;   ,,
+            bcc find_col        ;   ,,
+            inc PTR+1           ;   ,,
 find_col:   ldx #0              ; Get character at pointer position
             lda (PTR,x)         ; ,,
             cmp #CHR_OPEN       ; If it's an open space, do nothing
@@ -446,13 +458,13 @@ no_potion:  lda #$20            ; Space to handle potion use
 ; To save time when nothing else has changed                        
 ShowEnergy: lda #$1e            ; Make color cyan
             jsr CHROUT          ; ,,
-            ldy #15
-            ldx #3
-            clc
-            jsr PLOT
-            ldx ENERGY
-            lda #0
-            jsr PRTFIX
+            ldy #15             ; Set up PLOT on the energy line
+            ldx #3              ; ,,
+            clc                 ; ,,
+            jsr PLOT            ; ,,
+            ldx ENERGY          ; Set up PRTFIX with the amount of energy
+            lda #0              ;   for display
+            jsr PRTFIX          ;   ,,
             lda #$20            ; Space at the end to deal with decreases
             jmp CHROUT          ; ,,
           
@@ -542,7 +554,7 @@ enc_key:    cmp #CHR_KEY        ; Process key
             jsr FXLaunch        ;   ,,
             jsr RemoveItem      ;   ...remove the key from the maze
             lsr KEYSTAT         ;   then set bit 5 so door can be unlocked
-            rts                 ;   ,,
+            rts                 ; ,,
 enc_wall:   cmp #$3a            ; Process an item
             bcs enc_item        ; ,,
 Revert:     lda TMP_COOR_Y      ; Process a wall by reverting to the previous
@@ -556,8 +568,6 @@ enc_item:   sta UNDER           ; Set the item as under the player now
             beq enc_r           ; ,,
             cmp #CHR_POTION     ; Handle potion acquisition
             bne chk_armor       ; ,,
-            lda #0              ; Launch pick-up effect
-            jsr FXLaunch        ; ,,
             inc POTIONS         ; ,,
             lda POTIONS         ; ,,
             cmp #MAX_ITEMS+1    ; Enforce maximum number of potions
@@ -565,11 +575,11 @@ enc_item:   sta UNDER           ; Set the item as under the player now
             lda #MAX_ITEMS      ; ,,
             sta POTIONS         ; ,,
             rts                 ; ,,
-potion_r:   jmp RemoveItem      ; If a potion was picked up, remove it
+potion_r:   lda #0              ; Launch pick-up effect
+            jsr FXLaunch        ; ,,
+            jmp RemoveItem      ; If a potion was picked up, remove it
 chk_armor:  cmp #CHR_ARMOR      ; Handle armor acquisition
             bne chk_food        ; ,,
-            lda #0              ; Launch pick-up effect
-            jsr FXLaunch        ; ,,
             inc ARMOR           ; ,,
             lda ARMOR           ; ,,
             cmp #MAX_ITEMS+1    ; Enforce maximum number of armor
@@ -577,7 +587,9 @@ chk_armor:  cmp #CHR_ARMOR      ; Handle armor acquisition
             lda #MAX_ITEMS      ; ,,
             sta ARMOR           ; ,,
             rts                 ; ,,
-armor_r:    lda #HP_ARMOR       ; Increase HP with new armor
+armor_r:    lda #0              ; Launch pick-up effect
+            jsr FXLaunch        ; ,,
+            lda #HP_ARMOR       ; Increase HP with new armor
             jsr IncHP           ; ,,
             jmp RemoveItem      ; If armor was picked up, remove it
 chk_food:   cmp #CHR_FOOD       ; Handle food acquisition
@@ -593,10 +605,10 @@ enc_r:      rts
                         
 ; Remove Item
 ; Set the UNDER value to open, so when the player moves off it, it will be gone
-RemoveItem: lda #CHR_OPEN
-            sta UNDER
-            sec
-            ror CHANGED
+RemoveItem: lda #CHR_OPEN       ; Set open character under player to clear the
+            sta UNDER           ;   cell when the player moves off
+            sec                 ; Set change flag to see items in inventory
+            ror CHANGED         ; ,,
             rts
  
 ; Return Level * A
@@ -614,34 +626,122 @@ mult_xp:    adc SCRPAD
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; DANCE OFF (COMBAT) ROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;     
-; Dance Off
-DanceOff:   jsr PattMake
-            ldy PTR             ; Store the monster position, so it can be
+; (1) Make the Pattern
+; The screen code encountered is in A
+DanceOff:   sec                 ; Set encounter to monster level, where
+            sbc #CHR_GOBLIN-1   ;   1 = Goblin, 2 = Wraith, 3 = Dragon
+            cmp LAST_ENC        ; If the same monster was encountered last,
+            beq DOSetup         ;   then just return and use the same pattern
+new_patt:   sta LAST_ENC        ; Set the last encounter
+            clc                 ; Length = Monster strength + level - 1
+            adc LEVEL           ; ,,
+            sbc #$00            ; ,, (Carry is clear, so subtracting 1)
+            sta PATT_LEN        ; ,,
+            ldy LAST_ENC        ; If the encountered monster is a goblin,
+            cpy #GOBLIN         ;   then limit the pattern length to 4,
+            bne no_limit        ;   regardless of level
+            cmp #4              ;   ,,
+            bcc no_limit        ;   ,,
+            lda #4              ;   ,,
+            sta PATT_LEN        ;   ,,
+no_limit:   tay                 ; Y is the index, add notes to pattern backwards
+            lda #>SEED
+            sta P_RAND+1
+-loop:      jsr RandDir
+            clc                 ; Add one to the random number so that it's a
+            adc #1              ;   valid direction (1=N 2=E 3=S 4=W)
+            sta PATTERN,y       ; Store the pattern in reverse order
+            dey
+            bne loop       
+
+; (2) Set Up Dance Off
+DOSetup:    ldy PTR             ; Store the monster position, so it can be
             sty ENC_PTR         ;   cleared if the monster is defeated
             ldy PTR+1           ;   ,,
             sty ENC_PTR+1       ;   ,,
             jsr Revert          ; Put the player back where he or she was
             jsr Coor2Ptr        ;   in order to display the dance moves
-            jsr PattPlay        ; Play the pattern and listen for response.
-            bne lose            ;   Z flag is set if player won
+
+; (3) Play the Pattern  
+            ldy PATT_LEN
+-loop:      lda PATTERN,y
+            tax
+            lda Note,x
+            sta VOICEM
+            lda Dance,x
+            ldx #0
+            sta (PTR,x)
+            lda #21             ; Starting point is 1/3 second delay
+            sec                 ; But it gets a little faster with each 
+            sbc LEVEL           ;   level
+            bne patt_delay      ; This here code here is just a failsafe,
+            lda #10             ;   to prevent a super-long delay
+patt_delay: jsr Delay
+            ldx #0              ; Return to Ready position after each move,
+            lda #CHR_READY      ;   so the game is easier to play without
+            sta (PTR,x)         ;   sound
+            lda #0
+            sta VOICEM
+            lda #6
+            jsr Delay
+            dey
+            bne loop
+
+; (4) Player Perform
+            jsr DrumStart       ; Start the drumbeat     
+            lda #CHR_READY      ; Draw the player in ready state
+            ldx #0              ; ,,
+            sta (PTR,x)         ; ,,
+-debounce:  jsr Joystick        ; Debounce the joystick before responding
+            bne debounce        ; ,,
+            ldy PATT_LEN
+-loop:      jsr Joystick
+            beq loop
+            cmp PATTERN,y
+            bne lose
+hit_move:   tax
+            lda Note,x
+            sta VOICEM
+            lda Dance,x
+            ldx #0
+            sta (PTR,x)
+            lda #13             ; Set screen color to indicate successful
+            sta SCRCOL          ;   move
+-debounce:  jsr Joystick        ; Debounce joystick
+            bne debounce        ; ,,
+            ldx #0              ; Back to the Ready position after a move
+            lda #CHR_READY      ; ,,
+            sta (PTR,x)         ; ,,
+            lda #0
+            sta VOICEM
+            lda #15
+            sta SCRCOL
+            dey
+            bne loop
+win:        jsr DrumStop
+            lda #CHR_BANISH     ; Show the monster banishment graphic
+            ldx #0              ; ,,
+            sta (ENC_PTR,x)     ; ,,
             lda LAST_ENC        ; Get the monster strength
             pha
-win:        lda #1              ; Launch victory effect
+            lda #1              ; Launch victory effect
             jsr FXLaunch        ; ,,
-inc_xp:     jsr LevelMult       ; Increase XP based on level
-            jsr IncXP           ; ,,            
+            jsr LevelMult       ; Increase XP based on level
+            jsr IncXP           ; ,,
+            lda #$10            ; Delay to show the banishment graphic
+            jsr Delay           ; ,,
             lda #CHR_OPEN       ; Remove the vanquished foe from the dungeon
             sta UNDER           ; ,,
             ldx #0              ; ,,
             sta (ENC_PTR,x)     ; ,,
             pla
-            cmp #$04            ; Is this the dragon?
+            cmp #DRAGON         ; Is this the dragon?
             bne ch_wraith       ; ,,
             sec                 ; If so, set the KEYSTAT flag when the dragon
             ror KEYSTAT         ;   has been defeated
             lda #CHR_KEY        ; Put the key on the screen
             sta $1f55           ; ,,
-ch_wraith:  cmp #2              ; Wraiths don't leave the maze when defeated,
+ch_wraith:  cmp #WRAITH         ; Wraiths don't leave the maze when defeated,
             bne reset_enc       ;   they just pick another spot to haunt
             lda #CHR_WRAITH     ;   ,,
             sec                 ;   ,,
@@ -656,7 +756,8 @@ ch_wraith:  cmp #2              ; Wraiths don't leave the maze when defeated,
 reset_enc:  lda #0              ; Reset last encounter so there's a new pattern
             sta LAST_ENC        ;   for the next monster of this kind
             rts
-lose:       lda LAST_ENC        ; For the dragon, play a low-pitched noise
+lose:       jsr DrumStop
+            lda LAST_ENC        ; For the dragon, play a low-pitched noise
             cmp #4              ;   instead of the defeat sound effect
             bne enc_eff         ;   ,,
             lda #$ff            ;   ,,
@@ -685,10 +786,12 @@ vis_eff:    lda #10             ; Red border = defeat
             lda #0              ; Shut off the dragon burn noise effect
             sta NOISE           ; ,, (if necessary)
             lda LAST_ENC        ; Multiply monster strength times level number
-            jsr LevelMult       ; ,,
-            and TIME_L          ; AND with the jiffy clock to possibly remove
-            ora LAST_ENC        ;   bits, then ORA with the monster strength for
-            jsr DecHP           ;   a minimum HP loss
+            jsr LevelMult       ;   for maximum HP loss
+            and VIATIME         ; AND with VIA timer to remove random bits
+            cmp LAST_ENC        ; Is the damage less than the monster strengh?
+            bcs dec_hp          ; If so, set it to the minimum
+            lda LAST_ENC        ; ,,
+dec_hp:     jsr DecHP           ; Mark the HP loss
             lda #CHR_OPEN       ; Clear the cell under the player
             sta UNDER           ; ,,
             lda LAST_ENC        ; If the player was defeated by a wraith, there
@@ -702,91 +805,6 @@ vis_eff:    lda #10             ; Red border = defeat
 lose_r:     lda #15             ; Put screen color back
             sta SCRCOL          ; ,,
             rts
-            
-PattMake:   sec                 ; Set encounter to monster level, where
-            sbc #CHR_GOBLIN-1   ; 1 = Goblin, 2 = Wraith, 4 = Dragon
-            cmp #$03            ; Increment monster level for dragon
-            bne ch_last         ; ,,
-            lda #$04            ; ,,
-ch_last:    cmp LAST_ENC        ; If the same monster was encountered last,
-            bne new_patt        ;   then just return and use the same pattern
-            rts                 ;   again
-new_patt:   sta LAST_ENC        ; Set the last encounter
-            clc                 ; Length = Monster strength + level - 1
-            adc LEVEL           ; ,,
-            sbc #$00            ; ,, (Carry is clear, so subtracting 1)
-            sta PATT_LEN        ; ,,
-            tay                 ; Y is the index, add notes to pattern backwards
-            lda #>SEED
-            sta P_RAND+1
--loop:      jsr RandDir
-            clc                 ; Add one to the random number so that it's a
-            adc #1              ;   valid direction (1=N 2=E 3=S 4=W)
-            sta PATTERN,y       ; Store the pattern in reverse order
-            dey
-            bne loop            
-            rts
-            
-; Play a Pattern            
-PattPlay:   ldy PATT_LEN
--loop:      lda PATTERN,y
-            tax
-            lda Note,x
-            sta VOICEM
-            lda Dance,x
-            ldx #0
-            sta (PTR,x)
-            lda #21             ; Starting point is 1/3 second delay
-            sec                 ; But it gets a little faster with each 
-            sbc LEVEL           ;   level
-            bne patt_delay      ; This here code here is just a failsafe,
-            lda #10             ;   to prevent a super-long delay
-patt_delay: jsr Delay
-            ldx #0              ; Return to Ready position after each move,
-            lda #CHR_READY      ;   so the game is easier to play without
-            sta (PTR,x)         ;   sound
-            lda #0
-            sta VOICEM
-            lda #6
-            jsr Delay
-            dey
-            bne loop
-            ; Fall through to PattListen
-
-PattListen: lda #CHR_READY      ; Draw the player in walking state
-            ldx #0              ; ,,
-            sta (PTR,x)         ; ,,
-            lda #1              ; Set color to white during the listen
-            jsr SetColor        ; ,,
--debounce:  jsr Joystick        ; Debounce the joystick before responding
-            bne debounce        ; ,,
-            ldy PATT_LEN
--loop:      jsr Joystick
-            beq loop
-            cmp PATTERN,y
-            beq hit_move
-            rts
-hit_move:   tax
-            lda Note,x
-            sta VOICEM
-            lda Dance,x
-            ldx #0
-            sta (PTR,x)
-            lda #13             ; Set screen color to indicate successful
-            sta SCRCOL          ;   move
--debounce:  jsr Joystick        ; Debounce joystick
-            bne debounce        ; ,,
-            ldx #0              ; Back to the Ready position after a move
-            lda #CHR_READY      ; ,,
-            sta (PTR,x)         ; ,,
-            lda #0
-            sta VOICEM
-            lda #15
-            sta SCRCOL
-            dey
-            bne loop
-            rts            
-    
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; MAZE GENERATOR ROUTINES
@@ -974,25 +992,25 @@ move_r:     rts
 ; Write character in A to a random cell.
 ; If carry is set, Position will try again if the cell is occupied
 ; A will be set to the index of the successful position
-Position:   pha
-            sty TMP_IX
-            php
-            lda #$d6
-            sta PTR
-            lda #$1e
-            sta PTR+1
--loop:      jsr BASRND
-            lda RNDNUM
-            tay
-            plp
-            php
-            bcc pos_ok
-            lda (PTR),y
-            cmp #CHR_OPEN
-            bne loop
-pos_ok:     plp
-            pla
-            sta (PTR),y
+Position:   pha                 ; Store character for later
+            sty TMP_IX          ; Save index for the caller
+            php                 ; Save carry status for retry behavior
+            lda #$d6            ; Characters are positioned in a 256-byte
+            sta PTR             ;   band, starting at $1ed6
+            lda #$1e            ;   ,,
+            sta PTR+1           ;   ,,
+-loop:      jsr BASRND          ; Get a random number between 0 and 255
+            lda RNDNUM          ; ,,
+            tay                 ; Use this number as an index of $1ed6
+            plp                 ; Pull processor status to check carry
+            php                 ; ,,
+            bcc pos_ok          ; If carry is clear, all positions are OK
+            lda (PTR),y         ; If carry is set, see what's there now
+            cmp #CHR_OPEN       ;   and try again if it's not open
+            bne loop            ;   ,,
+pos_ok:     plp                 ; Discard the existing processor status
+            pla                 ; Pull back the character to display
+            sta (PTR),y         ;   and write it to the index
             tya                 ; Put position in A for access outside subroutine
             ldy TMP_IX          ; Restore Y
             rts
@@ -1137,6 +1155,8 @@ SetupHW:    lda #15             ; Set background color
             sta VIA2DD          ; ,,
             lda #$80            ; Disable Commodore-Shift
             sta CASECT          ; ,,
+            lda #0              ; Turn off music player
+            sta DRUMS_ON        ; ,,
             lda #<Welcome       ; Install the custom NMI (restart)
             sta NMINV           ; ,, 
             lda #>Welcome       ; ,,
@@ -1214,15 +1234,14 @@ WipeColor:  ldy #0
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Play Direction Tone
 ; With A as the direction (0-3)
-DirTone:    pha
-            tax
-            lda Note,x
-            sta VOICEM
-            lda #$06
-            jsr Delay
-            lda #0
-            sta VOICEM
-            pla
+DirTone:    tax                 ; The joystick directions act a an index
+            lda Note,x          ; Get the frequency from the table
+            sta VOICEM          ; Play the note
+            lda #$06            ; Short delay, so it can be heard
+            jsr Delay           ; ,,
+            lda #0              ; Silence the sound register
+            sta VOICEM          ; ,,
+            txa                 ; Put A back for the caller's benefit
             rts
             
 ; Play Next Sound Effect
@@ -1281,6 +1300,52 @@ FXLaunch:   sei                 ; Don't play anything while setting up
             rts            
 
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; DRUM PLAYER ROUTINE
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Start Drum Track
+DrumStart:  sec
+            ror DRUMS_ON
+            lda #$2b
+            sta DRUMS_REG
+            lda VIATIME
+            sta DRUMS_REG+1
+            lda #0
+            sta DRUMS_COUNT
+            rts
+
+; Stop Drum Track           
+DrumStop:   lsr DRUMS_ON
+            lda #0
+            sta NOISE
+            rts
+
+; Handle ISR            
+DrumServ:   dec DRUMS_COUNT
+            bmi drum_reset
+            lda DRUMS_COUNT
+            cmp #$03
+            bne drum_r
+            lda #0
+            beq set_noise
+drum_reset: lda #$07
+            sec
+            sbc LEVEL
+            sta DRUMS_COUNT
+            asl DRUMS_REG
+            rol DRUMS_REG+1
+            bcc play_drum
+            lda #$01
+            ora DRUMS_REG
+            sta DRUMS_REG
+play_drum:  lda #$90
+            bit DRUMS_REG+1
+            bcc set_noise
+            lda #$f9
+set_noise:  sta NOISE            
+drum_r:     rts
+
+               
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1362,10 +1427,8 @@ Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
@@ -1411,7 +1474,8 @@ CharSet:    ; Letters (* used,- reassignable)
             .byte $7c,$92,$10,$28,$28,$10,$10,$00 ; T *
             .byte $c6,$92,$82,$82,$82,$82,$7c,$00 ; U *
             .byte $c6,$92,$82,$82,$44,$28,$10,$00 ; V *
-            .byte $a2,$aa,$a2,$92,$4c,$28,$10,$00 ; W -
+            ;.byte $a2,$aa,$a2,$92,$4c,$28,$10,$00 ; W -
+            .byte $00,$08,$2a,$00,$63,$00,$2a,$08 ; Monster banish ($17)
             .byte $82,$82,$54,$28,$54,$82,$82,$00 ; X *
             ;.byte $c6,$82,$54,$28,$28,$10,$10,$00 ; Y -
             ;.byte $7e,$84,$18,$6c,$30,$42,$fc,$00 ; Z -
