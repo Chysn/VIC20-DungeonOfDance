@@ -107,6 +107,7 @@ RNDNUM      = $8d               ; Result storage location for RND()
 CLSR        = $e55f             ; Clear screen/home
 PLOT        = $fff0             ; PLOT 
 CHROUT      = $ffd2             ; Output one character
+VIATIME     = $9114             ; VIA 1 Timer 1 LSB
 
 ; Memory
 CHANGED     = $05               ; Non-energy resource quantity has changed
@@ -134,6 +135,7 @@ TMP_IX      = $07               ; Temporary index
 PATT_LEN    = $a5               ; Pattern length
 PATTERN     = $033c             ; Current pattern
 ENC_PTR     = $00               ; Monster encounter save
+LAST_HORIZ  = $01               ; Last horizontal movement
 
 ; Sound Memory
 FX_REG      = $a6               ; Current effect frequency register
@@ -194,13 +196,22 @@ read_js:    jsr Joystick        ; Wait for joystick
             cmp #JS_FIRE        ; Use a potion if fire button was pressed
             beq UsePotion       ; ,,
             pha                 ; Save direction
-            ldy #CHR_PL_R       ; Set player graphic (left or right-facing)
+            cmp #JS_NORTH       ; If the move is north or south, don't change
+            beq leave_char      ;   the character
+            cmp #JS_SOUTH       ;   ,,
+            beq leave_char      ;   ,,
+            cmp LAST_HORIZ      ; Is there a directional change (east/west)?
+            beq get_char        ; If not, set the character to correct direction
+            ldy #CHR_READY
+            bne set_char
+get_char:   ldy #CHR_PL_R       ; Set player graphic (left or right-facing)
             cmp #JS_EAST        ;   if the player moves east or west.
             beq set_char        ;   Otherwise, leave the player graphic
             cmp #JS_WEST        ;   as it is.
             bne leave_char      ;   ,,
             dey                 ;   ,,
-set_char:   sty PLAYER_CH       ;   ,, 
+set_char:   sta LAST_HORIZ      ; Save the last horizontal movement
+            sty PLAYER_CH       ; Store the new character
 leave_char: lda UNDER           ; Replace the character under the player as
             jsr PlotChar        ;   the player leaves the cell
             ldx COOR_X          ; Set temporary coordinates, in case this
@@ -250,14 +261,15 @@ UsePotion:  lda POTIONS         ; Are there any potions to drink?
             bne potion_dec      ; If so, drink one
             jmp Main            ; Otherwise, back to Main
 potion_dec: dec POTIONS         ; Take away one potion
-            bit TIME_L          ; Check bit 6 of TIME_L, which should be lit up
-            bvs Transport       ;   25% of the time. In this case, teleport
+            bit VIATIME         ; Check bit 6 and 7 of VIATIME
+            bpl AddHP           ;   If they're both set (25% of the time),
+            bvs Teleport        ;   teleport
 AddHP:      lda #05             ; Launch healing potion effect
             jsr FXLaunch        ; ,,
             lda #POTION_HP      ; Add HP based on configuration value
             jsr IncHP           ; ,,
             jsr update_sc       ; Update and show score
-Transport:  lda #4              ; Launch transport out effect
+Teleport:   lda #4              ; Launch teleport effect
             jsr FXLaunch        ; ,,
             lda #CHR_OPEN       ; Disappear for a bit...
             sta UNDER           ; ,,
@@ -644,9 +656,15 @@ ch_wraith:  cmp #2              ; Wraiths don't leave the maze when defeated,
 reset_enc:  lda #0              ; Reset last encounter so there's a new pattern
             sta LAST_ENC        ;   for the next monster of this kind
             rts
-lose:       lda #2              ; Launch defeat effect
+lose:       lda LAST_ENC        ; For the dragon, play a low-pitched noise
+            cmp #4              ;   instead of the defeat sound effect
+            bne enc_eff         ;   ,,
+            lda #$ff            ;   ,,
+            sta NOISE           ;   ,,
+            bne vis_eff         ; Then go to visual effects as normal
+enc_eff:    lda #2              ; Launch defeat effect for Goblins and Wraiths
             jsr FXLaunch        ; ,,
-            lda #10             ; Red border = defeat
+vis_eff:    lda #10             ; Red border = defeat
             sta SCRCOL          ; ,,
             inc HORIZ           ; Rock the screen a bit, because you lost
             jsr Delay2          ; ,,
@@ -664,6 +682,8 @@ lose:       lda #2              ; Launch defeat effect
             jsr Delay2          ; ,,
             dec VERT            ; ,,
             jsr Delay2          ; ,,
+            lda #0              ; Shut off the dragon burn noise effect
+            sta NOISE           ; ,, (if necessary)
             lda LAST_ENC        ; Multiply monster strength times level number
             jsr LevelMult       ; ,,
             and TIME_L          ; AND with the jiffy clock to possibly remove
@@ -674,7 +694,8 @@ lose:       lda #2              ; Launch defeat effect
             lda LAST_ENC        ; If the player was defeated by a wraith, there
             cmp #2              ;   is the possibility of additional mischief.
             bne lose_r          ;   About a quarter of the time, the wraith will
-            bit TIME_L          ;   take away the player's map
+            bit VIATIME         ;   take away the player's map
+            bpl lose_r          ;   ,,
             bvc lose_r          ;   ,,
             lda #0              ;   ,,
             jsr WipeColor       ;   ,,
@@ -1170,6 +1191,8 @@ InitLevel:  inc LEVEL           ; Increment player level counter
             sta COOR_Y          ; ,,
             lda #CHR_PL_R       ; Set graphic to right-facing player
             sta PLAYER_CH       ; ,,
+            lda #JS_EAST        ; Set last horizontal direction to East
+            sta LAST_HORIZ      ; ,,
             lda #CHR_OPEN       ; Set the character under the player
             sta UNDER           ;   to an open space
             jsr DrawPlayer      ; Draw player at starting position
@@ -1309,7 +1332,7 @@ FXTable:    .byte $ef,$11       ; 0- Item Pick-up
             .byte $09,$13       ; 1- Danceoff won
             .byte $d0,$13       ; 2- Danceoff lost
             .byte $01,$25       ; 3- Eat food
-            .byte $d0,$23       ; 4- Transported
+            .byte $d0,$23       ; 4- Teleported
             .byte $0f,$21       ; 5- Healing potion
             .byte $3c,$48       ; 6- Level victory tune
             .byte $55,$34       ; 7- HP to Energy alert
@@ -1342,9 +1365,7 @@ Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
@@ -1398,7 +1419,7 @@ CharSet:    ; Letters (* used,- reassignable)
             .byte $30,$38,$20,$f0,$28,$60,$d0,$98 ; Player walking - right
             
             ; Indicators
-            .byte $01,$02,$05,$68,$d0,$88,$58,$30 ; Key Indicator  ($1b)
+            .byte $00,$00,$00,$60,$5e,$6a,$00,$00 ; Key Indicator  ($1b)
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; Dungeon Fill   ($1c)
             .byte $b2,$ba,$92,$7c,$10,$1c,$24,$44 ; Dance Up       ($1d)
             .byte $00,$38,$38,$10,$7c,$92,$38,$c6 ; Dance Down     ($1e)
@@ -1441,5 +1462,5 @@ CharSet:    ; Letters (* used,- reassignable)
             
             ; Monsters
             .byte $01,$3d,$3d,$19,$3e,$58,$18,$24 ; Goblin         ($3d)
-            .byte $00,$1c,$3e,$aa,$fe,$76,$1c,$00 ; Wraith         ($3e)
+            .byte $0c,$0c,$40,$3e,$0d,$00,$14,$28 ; Wraith         ($3e)
             .byte $2c,$66,$e7,$2f,$3e,$3c,$67,$88 ; Dragon         ($3f)
