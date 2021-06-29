@@ -79,7 +79,7 @@ JS_FIRE     = 5                 ; Oh, and Fire, which in this game means "drink"
 ; System Resources
 CINV        = $0314             ; ISR vector
 NMINV       = $0318             ; Release NMI vector
-;-NMINV     = $fffe             ; Development NMI non-vector (uncomment for dev)
+-NMINV     = $fffe             ; Development NMI non-vector (uncomment for dev)
 SCREEN      = $1e00             ; Screen character memory (unexpanded)
 COLOR       = $9600             ; Screen color memory (unexpanded)
 IRQ         = $eb12             ; System ISR return point
@@ -122,7 +122,7 @@ ENERGY      = $b3               ; Energy
 POTIONS     = $b4               ; Potions available
 ARMOR       = $b5               ; Armor (Max HP = Armor * 4)
 LEVEL       = $b6               ; Dungeon/Character Level
-HAS_KEY     = $06               ; Flag for key (bit 7=has key, bit 6=found door)
+KEYSTAT     = $06               ; Flag for key (bit 7=has key, bit 6=found door)
 JOYREG      = $10               ; Joystick register
 UNDER       = $12               ; Character under player
 COL_PTR     = $13               ; Color pointer (2 bytes)
@@ -165,7 +165,8 @@ Welcome:    jsr SetupHW         ; Set up hardware
             lda #>SEED          ; ,,
             sta P_RAND+1        ; ,,
             jsr MakeMaze        ; ,,
-            lsr HAS_KEY         ; ,,
+            lda #0              ; Reset KEYSTAT so that dragon appears
+            sta KEYSTAT         ; ,,
             jsr DragDoor        ; Show dragon and door
             lda #CHR_PL_R       ; Place the player
             sta $1e9b           ; ,,
@@ -183,8 +184,9 @@ NextLevel:  jsr InitLevel
             ; Fall through to main action loop
 
 ; Main action loop            
-Main:       bit HAS_KEY         ; Check for level completion with bit 6 of
-            bvs LevelUp         ;   HAS_KEY
+Main:       lda KEYSTAT         ; Check for level completion with bit 5 of
+            cmp #%00100000      ;   KEYSTAT
+            beq LevelUp         ;   ,,
             lda HP              ; Check for player death
             beq QuestOver       ; ,,
 read_js:    jsr Joystick        ; Wait for joystick
@@ -284,8 +286,8 @@ update_sc:  sec                 ; Mark the scoresheet changed, so that the
 ; Interrupt Service Routine            
 ISR:        inc TIME_L          ; Circumventing BASIC's clock, so advance it
             jsr FXService       ; Play any sound effects that are going on
-            bit HAS_KEY         ; If the dragon hasn't already been defeated,
-            bmi isr_r           ;   flash the dragon half the time
+            lda KEYSTAT         ; If the dragon hasn't already been defeated,
+            bne isr_r           ;   flash the dragon half the time
             bit TIME_L          ;   ,,
             bmi flash_dr        ;   ,,
             lda #COL_DRAGON     ; The other half of the time, keep the dragon
@@ -346,9 +348,8 @@ DragDoor:   lda #CHR_DOOR       ; Place the door, always in the same position
             sta $1fe3           ; ,,
             lda #COL_DOOR       ; Make the door cyan
             sta $97e3           ; ,,
-            bit HAS_KEY         ; If the dragon has been defeated, do not
-            bmi dragdoor_r      ;   display
-            bvs dragdoor_r      ;   ,,
+            lda KEYSTAT         ; If the dragon has been defeated, do not
+            bne dragdoor_r      ;   display
             lda #CHR_DRAGON     ; Place the dragon, always in the same position
             sta $1f55           ; ,,
             lda #COL_DRAGON     ; Make the dragon red
@@ -367,8 +368,8 @@ show_all:   lsr CHANGED         ; Clear the CHANGED flag
             lda #<Labels        ; Show Score Labels
             ldy #>Labels        ; ,,
             jsr PRTSTR          ; ,,
-            bit HAS_KEY         ; Show the key if the dragon has been defeated
-            bpl lev_num         ; ,,
+            bit KEYSTAT         ; Show the key if the dragon has been defeated
+            bvc lev_num         ; ,,
             lda #CHR_KEY        ; ,,
             sta $1e62           ; ,,
             lda #7              ; ,,
@@ -518,8 +519,18 @@ Encounter:  jsr Coor2Ptr        ; Update pointer based on new coordinates
             ldx #0              ; What's in the new cell?
             lda (PTR,x)         ; ,,
             cmp #CHR_DOOR       ; Process door
-            bne enc_wall        ; ,,
-            jmp Door
+            bne enc_key         ;   ,,
+            bit KEYSTAT         ;   If the key has been picked up on this level,
+            bvc locked          ;   bit 5 of KEYSTAT will be set. Otherwise, the
+            lsr KEYSTAT         ;   door is considered "locked," and nothing
+locked:     rts                 ;   will happen.
+enc_key:    cmp #CHR_KEY        ; Process key
+            bne enc_wall        ;   If the key is encountered, launch the key
+            lda #8              ;   sound effect...
+            jsr FXLaunch        ;   ,,
+            jsr RemoveItem      ;   ...remove the key from the maze
+            lsr KEYSTAT         ;   then set bit 5 so door can be unlocked
+            rts                 ;   ,,
 enc_wall:   cmp #$3a            ; Process an item
             bcs enc_item        ; ,,
 Revert:     lda TMP_COOR_Y      ; Process a wall by reverting to the previous
@@ -568,15 +579,6 @@ enc_monst:  cmp #CHR_GOBLIN     ; Handle
             bcs DanceOff
 enc_r:      rts
                         
-; Process Door Encounter
-; If the dragon has been defeated on this level, HAS_KEY bit 7 is set. If the
-; door is reached, HAS_KEY bit 6 is set, indicating the level is cleared. This
-; will be picked up as a "Level Up" signal by Main.
-Door:       bit HAS_KEY
-            bpl locked
-            lsr HAS_KEY
-locked:     rts  
-
 ; Remove Item
 ; Set the UNDER value to open, so when the player moves off it, it will be gone
 RemoveItem: lda #CHR_OPEN
@@ -611,23 +613,24 @@ DanceOff:   jsr PattMake
             jsr PattPlay        ; Play the pattern and listen for response.
             bne lose            ;   Z flag is set if player won
             lda LAST_ENC        ; Get the monster strength
-            cmp #$04            ; Is this the dragon?
-            bne win             ; ,,
-            sec                 ; If so, set the HAS_KEY flag when the dragon
-            ror HAS_KEY         ;   has been defeated
-            lda #8              ; Launch Has Key sound effect
-            bne victory_fx      ; ,, (bypass normal victory sound)
+            pha
 win:        lda #1              ; Launch victory effect
-victory_fx: jsr FXLaunch        ; ,,
+            jsr FXLaunch        ; ,,
 inc_xp:     jsr LevelMult       ; Increase XP based on level
             jsr IncXP           ; ,,            
             lda #CHR_OPEN       ; Remove the vanquished foe from the dungeon
             sta UNDER           ; ,,
             ldx #0              ; ,,
             sta (ENC_PTR,x)     ; ,,
-            lda LAST_ENC        ; Wraiths don't leave the maze when defeated,
-            cmp #2              ;   they just pick another spot to haunt
-            bne reset_enc       ;   ,,
+            pla
+            cmp #$04            ; Is this the dragon?
+            bne ch_wraith       ; ,,
+            sec                 ; If so, set the KEYSTAT flag when the dragon
+            ror KEYSTAT         ;   has been defeated
+            lda #CHR_KEY        ; Put the key on the screen
+            sta $1f55           ; ,,
+ch_wraith:  cmp #2              ; Wraiths don't leave the maze when defeated,
+            bne reset_enc       ;   they just pick another spot to haunt
             lda #CHR_WRAITH     ;   ,,
             sec                 ;   ,,
             jsr Position        ;   ,,
@@ -1160,7 +1163,7 @@ InitLevel:  inc LEVEL           ; Increment player level counter
             jsr MakeMaze        ; Make the maze
             jsr Populate        ; Populate it
             lda #0              ; Reset the key status flag
-            sta HAS_KEY         ; ,,
+            sta KEYSTAT         ; ,,
             sta LAST_ENC        ; Reset last encounter
             lda #1              ; Set starting position of player
             sta COOR_X          ; ,,
@@ -1302,7 +1305,7 @@ Dance:      .byte 0,$1d,$0d,$1e,$0b
 ;   (3) High nybble of the second byte (L) is the length in jiffies x 16
 ;       * Between approx. 1/4 sec and 4 sec in length
 ;   (4) Low nybble of second byte (S) is speed in jiffies
-FXTable:    .byte $ef,$11       ; 0- Item Pickup
+FXTable:    .byte $ef,$11       ; 0- Item Pick-up
             .byte $09,$13       ; 1- Danceoff won
             .byte $d0,$13       ; 2- Danceoff lost
             .byte $01,$25       ; 3- Eat food
@@ -1341,7 +1344,7 @@ Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
@@ -1395,7 +1398,7 @@ CharSet:    ; Letters (* used,- reassignable)
             .byte $30,$38,$20,$f0,$28,$60,$d0,$98 ; Player walking - right
             
             ; Indicators
-            .byte $3c,$66,$66,$3c,$10,$1c,$10,$18 ; Key Indicator  ($1b)
+            .byte $01,$02,$05,$68,$d0,$88,$58,$30 ; Key Indicator  ($1b)
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; Dungeon Fill   ($1c)
             .byte $b2,$ba,$92,$7c,$10,$1c,$24,$44 ; Dance Up       ($1d)
             .byte $00,$38,$38,$10,$7c,$92,$38,$c6 ; Dance Down     ($1e)
@@ -1433,7 +1436,7 @@ CharSet:    ; Letters (* used,- reassignable)
             
             ; Items
             .byte $00,$1c,$08,$08,$3e,$3e,$3e,$1c ; Potion         ($3a)
-            .byte $00,$41,$6b,$7f,$77,$63,$36,$1c ; Armor          ($3b)
+            .byte $00,$22,$2a,$3e,$2a,$36,$1c,$00 ; Armor          ($3b)
             .byte $00,$04,$08,$3c,$7e,$7e,$3c,$42 ; Food           ($3c)
             
             ; Monsters
