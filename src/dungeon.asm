@@ -145,6 +145,7 @@ LAST_HORIZ  = $01               ; Last horizontal movement
 DRUMS_ON    = $02               ; Music player on
 DRUMS_REG   = $03               ; Music shift register (2 bytes)
 DRUMS_COUNT = $08               ; Music countdown
+HI_XP       = $b8               ; High score (2 bytes)
 
 ; Sound Memory
 FX_REG      = $a6               ; Current effect frequency register
@@ -157,6 +158,9 @@ FX_SPEED    = $aa               ; Effect countdown reset value
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; MAIN PROGRAM
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+            lda #0              ; Clear high score only once
+            sta HI_XP           ; ,,
+            sta HI_XP+1         ; ,,
 Welcome:    jsr SetupHW         ; Set up hardware
             jsr DrumStart       ; Start soundtrack
             lda #40             ; Curated opening theme
@@ -187,9 +191,9 @@ Welcome:    jsr SetupHW         ; Set up hardware
             sta KEYSTAT         ; ,,
             jsr DragDoor        ; Show dragon and door
             lda #CHR_PL_R       ; Place the player
-            sta $1f4b           ; ,,
+            sta $1f35           ; ,,
             lda #5              ; Make the player green
-            sta $974b           ; ,,
+            sta $9735           ; ,,
             ; Fall through to game start
             
 ; Start a new game            
@@ -254,6 +258,8 @@ leave_char: lda UNDER           ; Replace the character under the player as
 QuestOver:  lda #<GameOver      ; Show Game Over notification
             ldy #>GameOver      ; ,,
             jsr PRTSTR          ; ,,
+            jsr DragDoor        ; ,,
+            jsr ShowHIXP        ; Show high score
             lda #110            ; Set screen color to reveal maze
             sta SCRCOL          ; ,,
             lda #CHR_OPEN       ; Disappear the player
@@ -326,9 +332,9 @@ ISR:        inc TIME_L          ; Circumventing BASIC's clock, so advance it
             bmi flash_dr        ;   ,,
             lda #COL_DRAGON     ; The other half of the time, keep the dragon
             bne paint_dr        ;   red
-flash_dr:   lda $9755           ; Get the dragon's current color
+flash_dr:   lda $973f           ; Get the dragon's current color
             eor #$06            ; 010 => 100, and back again
-paint_dr:   sta $9755           ; ,,
+paint_dr:   sta $973f           ; ,,
 drums:      bit DRUMS_ON        ; Handle drum player
             bpl isr_r           ; ,,
             jsr DrumServ        ; ,,
@@ -382,15 +388,15 @@ skip_col:   dey
            
 ; Show Dragon and Door            
 DragDoor:   lda #CHR_DOOR       ; Place the door, always in the same position
-            sta $1f5f           ; ,,
+            sta $1f49           ; ,,
             lda #COL_DOOR       ; Make the door cyan
-            sta $975f           ; ,,
+            sta $9749           ; ,,
             lda KEYSTAT         ; If the dragon has been defeated, do not
             bne dragdoor_r      ;   display
             lda #CHR_DRAGON     ; Place the dragon, always in the same position
-            sta $1f55           ; ,,
+            sta $1f3f           ; ,,
             lda #COL_DRAGON     ; Make the dragon red
-            sta $9755           ; ,,
+            sta $973f           ; ,,
 dragdoor_r: rts
             
 ; Show Score
@@ -480,6 +486,23 @@ ShowEnergy: lda #$1e            ; Make color cyan
             jsr PRTFIX          ;   ,,
             lda #$20            ; Space at the end to deal with decreases
             jmp CHROUT          ; ,,
+        
+; Show High XP
+; At the end of the game            
+ShowHIXP:   ldy #12
+            ldx #3
+            clc
+            jsr PLOT
+            lda #<HiXPLab       ; Show Score Labels
+            ldy #>HiXPLab       ; ,,
+            jsr PRTSTR          ; ,,
+            ldx HI_XP           ; Set up PRTFIX with the high XP score
+            lda HI_XP+1         ; ,,
+            jsr PRTFIX          ; ,,
+            lda #"0"            ; Multiply by 10
+            jsr CHROUT          ; ,,
+            lda #$20            ; Space to clear any excess energy, since
+            jmp CHROUT          ;   high XP uses the energy space
           
 ; Increase Energy
 ; By amount specified in A
@@ -546,8 +569,17 @@ IncXP:      sec                 ; Set the flag indicating HP change
             clc
             adc XP
             sta XP
-            bcc incxp_r
+            bcc ch_hixp
             inc XP+1
+ch_hixp:    lda XP              ; Check for high score
+            cmp HI_XP           ; ,,
+            lda XP+1            ; ,,
+            sbc HI_XP+1         ; ,,
+            bcc incxp_r         ; ,,
+            lda XP              ; Update, if necessary
+            sta HI_XP           ; ,,
+            lda XP+1            ; ,,
+            sta HI_XP+1         ; ,,
 incxp_r:    rts            
                                     
 ; Encounter
@@ -763,7 +795,7 @@ ch_dragon:  cmp #DRAGON         ; Is this the dragon?
             sec                 ; If so, set the KEYSTAT flag when the dragon
             ror KEYSTAT         ;   has been defeated
             lda #CHR_KEY        ; Put the key on the screen
-            sta $1f55           ; ,,
+            sta $1f3f           ; ,,
 ch_wraith:  cmp #WRAITH         ; Wraths don't leave the maze when defeated,
             bne ch_goblin       ;   they just go haunt another random cell
             lda #CHR_WRAITH     ;   ,,
@@ -846,9 +878,9 @@ lose_r:     lda #15             ; Put screen color back
 ; MAZE GENERATOR ROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Initialize Maze
-MakeMaze:   lda #$0b            ; Push 9,b as the X and Y coordinate as the
+MakeMaze:   lda #$0b            ; Push b,8 as the X and Y coordinate as the
             pha                 ;   starting point for the maze
-            lda #$09            ;   ,,
+            lda #$07            ;   ,,
             pha                 ;   ,,
             lda #1              ; Set the number of levels on the stack to 1
             sta LEVELS          ; ,,
@@ -911,16 +943,33 @@ open_wall:  pha                 ; Move to cell based on coordinates and
             jmp visit           ;   ,,
 deadend:    dec LEVELS          ;   Decrement the level counter, get next cell.
             bne pop_cell        ;   Maze is finished when LEVELS is 0
-            lda #$cb            ; This is bit esoteric; if the P_RAND counter is
-            cmp P_RAND          ;   at exactly $cb, it means the maze probably
-            beq rocks           ;   was generated at Welcome, so skip knock-outs
             
             ; Knock out some walls
-            ldy #12             ; Knock out some walls to make the maze a little
+            ldy #10             ; Knock out some walls to make the maze a little
 -loop:      lda #CHR_OPEN       ;   less stuffy
             clc                 ;   (Clear carry will allow open spaces to be
             jsr Position        ;   placed on walls)
             dey                 ;   ,,
+            bne loop            ;   ,,
+            lda #CHR_OPEN       ; Knock out space for
+            sta $1f35           ;   Player start
+            sta $1f3f           ;   The Dragon
+            sta $1f49           ;   The Door
+            lda #132            ; Set upper left corner
+            sta PTR             ; ,,
+            lda #$1e            ; ,,
+            sta PTR+1           ; ,,
+            ldy #17             ; Draw a margin down the left edge of the maze,
+            ldx #0              ;   in case any of the margin was knocked out
+-loop:      lda #CHR_WALL       ;   above
+            sta (PTR,x)         ;   ,,
+            lda PTR             ;   ,,
+            clc                 ;   ,,
+            adc #22             ;   ,,
+            sta PTR             ;   ,,
+            bcc margin          ;   ,,
+            inc PTR+1           ;   ,,
+margin:     dey                 ;   ,,
             bne loop            ;   ,,
             
             ; Add the dungeon graphics
@@ -1287,7 +1336,7 @@ InitLevel:  inc LEVEL           ; Increment player level counter
             sta LAST_ENC        ; Reset last encounter
             lda #1              ; Set starting position of player
             sta COOR_X          ; ,,
-            lda #9              ; ,,
+            lda #7              ; ,,
             sta COOR_Y          ; ,,
             lda #CHR_PL_R       ; Set graphic to right-facing player
             sta PLAYER_CH       ; ,,
@@ -1438,8 +1487,14 @@ Intro:      .asc $0d,$0d,$1e,"  2021 JASON JUSTIAN",$0d,$0d
             .asc "      PRESS FIRE",$0d,$00
 Labels:     .asc $1e,$0d," LV@        XP@",$0d," HP@        EN@",$00
 
-GameOver:   .asc $13,$05,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d
-            .asc $1d,$1d,$1d,$1d,$1d," QUEST OVER ",$00
+Manual:     .asc $13,$05,$0d,""
+
+GameOver:   .asc $13,$05,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d
+            .asc $1d,$1d,$1d,$1d,$1d,"            ",$0d
+            .asc $1d,$1d,$1d,$1d,$1d," QUEST OVER ",$0d
+            .asc $1d,$1d,$1d,$1d,$1d,"            ",$00
+
+HiXPLab:    .asc $1e,"HI@",$00
 
 ; Direction tables
 JoyTable:   .byte 0,$04,$80,$08,$10,$20            ; Corresponding direction bit
@@ -1488,26 +1543,20 @@ FXTable:    .byte $ef,$11       ; 0- Item Pick-up
             .byte $3c,$22       ; 9- Game Start
             
 ; Pad to 3583
-Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0
-
+Pad_3583:   .asc "------------------------------------------",$0d
+            .asc "(c) 2021 JASON JUSTIAN, BEIGE MAZE VIC LAB",$0d
+            .asc "------------------------------------------",$0d
+            .asc "THIS   SOFTWARE  IS   RELEASED  UNDER  THE",$0d
+            .asc "CREATIVE COMMONS ATTRIBUTION-NONCOMMERCIAL",$0d
+            .asc "4.0 INTERNATIONAL LICENSE.",$0d
+            .asc "THE  LICENSE  SHOULD BE INCLUDED WITH THIS",$0d
+            .asc "FILE. IF NOT, PLEASE SEE:",$0d
+            .asc "https://creativecommons.org/licenses/by-nc"
+            .asc "/4.0/legalcode.txt",$0d,$00
+            .asc "------------------------------------------",$0d
+            .asc "ALL WORK AND NO PLAY MAKES JACK A DULL BOY",$0d
+            .asc "------------------"
+            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1524,7 +1573,7 @@ CharSet:    ; Letters (* used,- reassignable)
             ; DUNGEON OF DANCE
             ; 2021 JASON JUSTIAN
             ; PRESS FIRE
-            ; LV~ HP~ XP~
+            ; LV@ HP@ XP@ EN@
             ; QUEST OVER
             .byte $00,$00,$20,$10,$00,$20,$10,$00 ; Colon
             .byte $10,$28,$44,$54,$82,$fe,$82,$00 ; A *
@@ -1541,7 +1590,7 @@ CharSet:    ; Letters (* used,- reassignable)
             ;.byte $a8,$88,$90,$e0,$90,$88,$84,$03 ; K -
             .byte $18,$38,$08,$78,$08,$14,$24,$14 ; Dance Left     ($0b)
             .byte $40,$40,$a0,$a0,$40,$42,$7c,$00 ; L *
-            ;.byte $82,$d6,$ba,$92,$aa,$92,$82,$00 ; M *
+            ;.byte $82,$d6,$ba,$92,$aa,$92,$82,$00 ; M -
             .byte $18,$1c,$10,$1e,$10,$28,$24,$28 ; Dance Right    ($0d)
             .byte $c2,$aa,$a2,$92,$8a,$aa,$86,$00 ; N *
             .byte $38,$44,$92,$ba,$92,$44,$38,$00 ; O *
@@ -1561,7 +1610,7 @@ CharSet:    ; Letters (* used,- reassignable)
             .byte $30,$38,$20,$f0,$28,$60,$d0,$98 ; Player walking - right
             
             ; Indicators
-            .byte $00,$00,$00,$60,$5e,$6a,$00,$00 ; Key Indicator  ($1b)
+            .byte $00,$00,$00,$60,$5e,$6a,$00,$00 ; Key            ($1b)
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; Dungeon Fill   ($1c)
             .byte $b2,$ba,$92,$7c,$10,$1c,$24,$44 ; Dance Up       ($1d)
             .byte $00,$38,$38,$10,$7c,$92,$38,$c6 ; Dance Down     ($1e)
