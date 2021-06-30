@@ -714,6 +714,14 @@ patt_delay: jsr Delay
             beq loop            ; ,,
             cmp PATTERN,y       ; Check for correct entry
             beq hit_move        ; ,,
+            lda #$8f            ; Wrong move!
+            sta VOICEM          ; ,,
+            lda #10             ; Red border = defeat
+            sta SCRCOL          ; ,,
+-debounce:  jsr Joystick        ; Debounce joystick
+            bne debounce        ; ,,
+            lda #0              ; Shut off buzzer
+            sta VOICEM          ; ,,
             jmp lose            ; Lost the battle if it's wrong
 hit_move:   tax
             lda Note,x
@@ -795,9 +803,7 @@ lose:       jsr DrumStop
             bne vis_eff         ; Then go to visual effects as normal
 enc_eff:    lda #2              ; Launch defeat effect for Goblins and Wraiths
             jsr FXLaunch        ; ,,
-vis_eff:    lda #10             ; Red border = defeat
-            sta SCRCOL          ; ,,
-            inc HORIZ           ; Rock the screen a bit, because you lost
+vis_eff:    inc HORIZ           ; Rock the screen a bit, because you lost
             jsr Delay2          ; ,,
             dec VERT            ; ,,
             jsr Delay2          ; ,,
@@ -1500,7 +1506,7 @@ Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+            .byte 0,0,0,0,0
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
@@ -1592,7 +1598,7 @@ CharSet:    ; Letters (* used,- reassignable)
             .byte $7c,$82,$92,$82,$7e,$02,$7c,$00 ; 9
             
             ; Items
-            .byte $00,$00,$1c,$08,$1c,$3e,$3e,$1c ; Potion         ($3a)
+            .byte $00,$00,$1c,$08,$08,$1c,$3e,$1c ; Potion         ($3a)
             .byte $00,$00,$22,$2a,$3e,$2a,$36,$1c ; Armor          ($3b)
             .byte $00,$12,$24,$12,$00,$3e,$3e,$1c ; Food           ($3c)
             
