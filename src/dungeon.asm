@@ -710,7 +710,7 @@ patt_delay: jsr Delay
             ldy PATT_LEN        ; Get the current pattern length
 -loop:      jsr Joystick        ; Wait for joystick
             beq loop            ; ,,
-            cmp JS_FIRE         ; ,, (disregard Fire button)
+            cmp #JS_FIRE        ; ,, (disregard Fire button)
             beq loop            ; ,,
             cmp PATTERN,y       ; Check for correct entry
             beq hit_move        ; ,,
