@@ -85,7 +85,7 @@ JS_FIRE     = 5                 ; Oh, and Fire, which in this game means "drink"
 ; System Resources
 CINV        = $0314             ; ISR vector
 NMINV       = $0318             ; Release NMI vector
--NMINV     = $fffe             ; Development NMI non-vector (uncomment for dev)
+;-NMINV     = $fffe             ; Development NMI non-vector (uncomment for dev)
 SCREEN      = $1e00             ; Screen character memory (unexpanded)
 COLOR       = $9600             ; Screen color memory (unexpanded)
 IRQ         = $eb12             ; System ISR return point
@@ -158,6 +158,13 @@ FX_SPEED    = $aa               ; Effect countdown reset value
 ; MAIN PROGRAM
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Welcome:    jsr SetupHW         ; Set up hardware
+            jsr DrumStart       ; Start soundtrack
+            lda #40             ; Curated opening theme
+            sta DRUMS_REG       ; ,,
+            lda #214            ; ,,
+            sta DRUMS_REG+1     ; ,,
+            lda #0              ; ,,
+            sta DRUMS_COUNT     ; ,,
             jsr CLSR            ; Clear the screen
             lda #<Name          ; Show Name
             ldy #>Name          ; ,,
@@ -180,9 +187,9 @@ Welcome:    jsr SetupHW         ; Set up hardware
             sta KEYSTAT         ; ,,
             jsr DragDoor        ; Show dragon and door
             lda #CHR_PL_R       ; Place the player
-            sta $1e9b           ; ,,
+            sta $1f4b           ; ,,
             lda #5              ; Make the player green
-            sta $969b           ; ,,
+            sta $974b           ; ,,
             ; Fall through to game start
             
 ; Start a new game            
@@ -203,8 +210,9 @@ Main:       lda KEYSTAT         ; Check for level completion with bit 5 of
 read_js:    jsr Joystick        ; Wait for joystick
             beq read_js         ; ,,
             cmp #JS_FIRE        ; Use a potion if fire button was pressed
-            beq UsePotion       ; ,,
-            pha                 ; Save direction
+            bne is_dir          ; ,,
+            jmp UsePotion       ; ,,
+is_dir:     pha                 ; Save direction
             cmp #JS_NORTH       ; If the move is north or south, don't change
             beq leave_char      ;   the character
             cmp #JS_SOUTH       ;   ,,
@@ -255,15 +263,20 @@ QuestOver:  lda #<GameOver      ; Show Game Over notification
 ; Level Up
 LevelUp:    lda #6              ; Launch level up effect
             jsr FXLaunch        ; ,,
+            jsr DrumStart       ; Start drums
             lda #7              ; Show the rest of the maze
             jsr WipeColor       ; ,,
             lda #5              ; Earn 5XP per level
             jsr LevelMult       ; ,,
             jsr IncXP           ; ,,
             jsr ShowScore       ; Show the score with the new XP
-            lda #180            ; Delay for 3 seconds
-            jsr Delay           ; ,,
-            jmp NextLevel       ; before starting the next level
+            lda #180            ; Delay for 3 seconds before starting
+            jsr Delay           ;   the next level
+            jsr ScrollMaze      ; Scroll the maze off to the left
+            jsr DrumStop        ; Stop drums and reset volume
+            lda #$0a            ; ,,
+            sta VOLUME          ; ,,
+            jmp NextLevel
      
 ; Use Potion            
 UsePotion:  lda POTIONS         ; Are there any potions to drink?
@@ -369,9 +382,9 @@ skip_col:   dey
            
 ; Show Dragon and Door            
 DragDoor:   lda #CHR_DOOR       ; Place the door, always in the same position
-            sta $1fe3           ; ,,
+            sta $1f5f           ; ,,
             lda #COL_DOOR       ; Make the door cyan
-            sta $97e3           ; ,,
+            sta $975f           ; ,,
             lda KEYSTAT         ; If the dragon has been defeated, do not
             bne dragdoor_r      ;   display
             lda #CHR_DRAGON     ; Place the dragon, always in the same position
@@ -694,11 +707,14 @@ patt_delay: jsr Delay
             sta (PTR,x)         ; ,,
 -debounce:  jsr Joystick        ; Debounce the joystick before responding
             bne debounce        ; ,,
-            ldy PATT_LEN
--loop:      jsr Joystick
-            beq loop
-            cmp PATTERN,y
-            bne lose
+            ldy PATT_LEN        ; Get the current pattern length
+-loop:      jsr Joystick        ; Wait for joystick
+            beq loop            ; ,,
+            cmp JS_FIRE         ; ,, (disregard Fire button)
+            beq loop            ; ,,
+            cmp PATTERN,y       ; Check for correct entry
+            beq hit_move        ; ,,
+            jmp lose            ; Lost the battle if it's wrong
 hit_move:   tax
             lda Note,x
             sta VOICEM
@@ -730,29 +746,43 @@ win:        jsr DrumStop
             jsr IncXP           ; ,,
             lda #$10            ; Delay to show the banishment graphic
             jsr Delay           ; ,,
-            lda #CHR_OPEN       ; Remove the vanquished foe from the dungeon
-            sta UNDER           ; ,,
+            jsr RemoveItem      ; Remove the vanquished foe from the dungeon
             ldx #0              ; ,,
             sta (ENC_PTR,x)     ; ,,
             pla
-            cmp #DRAGON         ; Is this the dragon?
+ch_dragon:  cmp #DRAGON         ; Is this the dragon?
             bne ch_wraith       ; ,,
             sec                 ; If so, set the KEYSTAT flag when the dragon
             ror KEYSTAT         ;   has been defeated
             lda #CHR_KEY        ; Put the key on the screen
             sta $1f55           ; ,,
-ch_wraith:  cmp #WRAITH         ; Wraiths don't leave the maze when defeated,
-            bne reset_enc       ;   they just pick another spot to haunt
+ch_wraith:  cmp #WRAITH         ; Wraths don't leave the maze when defeated,
+            bne ch_goblin       ;   they just go haunt another random cell
             lda #CHR_WRAITH     ;   ,,
             sec                 ;   ,,
             jsr Position        ;   ,,
-            tay                 ;   ,,
+            tay                 ;   ,, (y is the wraith's position index)
             lda #$78            ; Set the color of the moved wraith to black
             clc                 ; ,,
             adc PTR+1           ; ,,
             sta PTR+1           ; ,,
             lda #0              ; ,,
             sta (PTR),y         ; ,,
+            beq reset_enc       ; Complete
+ch_goblin:  cmp #GOBLIN         ; There's a 1-in-4 chance that a defeated
+            bne reset_enc       ;   goblin drops food
+            bit VIATIME         ;   ,,
+            bpl reset_enc       ;   ,,
+            bvc reset_enc       ;   ,,
+            lda #CHR_FOOD       ;   ,,
+            ldx #0              ;   ,,
+            sta (ENC_PTR,x)     ;   ,,
+            lda #$78            ; Set the color of the dropped food
+            clc                 ; ,,
+            adc ENC_PTR+1       ; ,,
+            sta ENC_PTR+1       ; ,,
+            lda #COL_FOOD       ; ,,
+            sta (ENC_PTR,x)     ; ,,
 reset_enc:  lda #0              ; Reset last encounter so there's a new pattern
             sta LAST_ENC        ;   for the next monster of this kind
             rts
@@ -880,7 +910,7 @@ deadend:    dec LEVELS          ;   Decrement the level counter, get next cell.
             beq rocks           ;   was generated at Welcome, so skip knock-outs
             
             ; Knock out some walls
-            ldy #8              ; Knock out some walls to make the maze a little
+            ldy #12             ; Knock out some walls to make the maze a little
 -loop:      lda #CHR_OPEN       ;   less stuffy
             clc                 ;   (Clear carry will allow open spaces to be
             jsr Position        ;   placed on walls)
@@ -1142,7 +1172,45 @@ Delay:      clc
             bne loop
             rts    
 
-       
+; Scroll Maze off the left size of the screen         
+ScrollMaze: lda #22             ; Set repeat counter
+            sta TMP_IX          ; ,,
+repeat:     ldx #17             ; Set row counter
+            lda #132            ; Set upper left corner
+            sta PTR             ; ,,
+            lda #$1e            ; ,,
+            sta PTR+1           ; ,,
+loop_r:     ldy #0              ; Move 22 columns from right to left
+loop_c:     iny                 ;   Get y+1...
+            lda (PTR),y         ;   ,,
+            dey                 ;   ...and store it in y
+            cpy #21             ;   (if it's the last column, fill it with
+            bne move_c          ;   spaces instead of the next row
+            lda #CHR_OPEN       ;   ,,)
+move_c:     sta (PTR),y         ;   ,,
+            iny                 ;   Then move to the next column
+            cpy #22             ;   Have we done 22 columns?
+            bne loop_c          ;   If not, loop back
+            lda #22             ; Now move to the next row
+            clc                 ; ,,
+            adc PTR             ; ,,
+            sta PTR             ; ,,
+            bcc scr_l           ; ,,
+            inc PTR+1           ; ,,
+scr_l:      dex                 ; 17 times
+            bne loop_r          ; ,,
+            lda #$03            ; Short delay for each row scrolled out
+            jsr Delay           ; ,,
+            lda TMP_IX          ; Fade out
+            cmp #$0f            ; ,,
+            bcc fade_out        ; ,,
+            lda #$0f            ; ,,
+fade_out:   sta VOLUME          ; ,,
+            dec TMP_IX          ; Do 22 columns
+            bne repeat          ; ,,
+            rts
+            
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; SETUP ROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1157,6 +1225,8 @@ SetupHW:    lda #15             ; Set background color
             sta CASECT          ; ,,
             lda #0              ; Turn off music player
             sta DRUMS_ON        ; ,,
+            lda #$0a            ; Set volume
+            sta VOLUME          ; ,,
             lda #<Welcome       ; Install the custom NMI (restart)
             sta NMINV           ; ,, 
             lda #>Welcome       ; ,,
@@ -1170,7 +1240,10 @@ SetupHW:    lda #15             ; Set background color
             rts  
 
 ; Initialize Game
-InitGame:   lda #15             ; Screen color changes after game, so reset it
+InitGame:   jsr DrumStop        ; Stop drums
+            lda #9              ; Launch game start sound
+            jsr FXLaunch        ; ,,
+            lda #15             ; Screen color changes after game, so reset it
             sta SCRCOL          ; ,,
             ldy #0              ; Reset level to 0 (incremented at first level)
             sty LEVEL           ; ,,
@@ -1208,6 +1281,7 @@ InitLevel:  inc LEVEL           ; Increment player level counter
             sta LAST_ENC        ; Reset last encounter
             lda #1              ; Set starting position of player
             sta COOR_X          ; ,,
+            lda #9              ; ,,
             sta COOR_Y          ; ,,
             lda #CHR_PL_R       ; Set graphic to right-facing player
             sta PLAYER_CH       ; ,,
@@ -1249,8 +1323,6 @@ DirTone:    tax                 ; The joystick directions act a an index
 ; plays the pitch      
 FXService:  lda FX_LEN          ; Has the sound been launched?
             beq fx_end          ; If unlaunched, kill voice and return
-            lda #$0a            ; Make sure sound effects are not affected by
-            sta VOLUME          ;   music player's volume changes
             dec FX_LEN          ; Decrement both length
             dec FX_COUNT        ;   and countdown
             bne fx_r            ; If countdown has elapsed,
@@ -1306,9 +1378,9 @@ FXLaunch:   sei                 ; Don't play anything while setting up
 ; Start Drum Track
 DrumStart:  sec
             ror DRUMS_ON
-            lda #$2b
-            sta DRUMS_REG
             lda VIATIME
+            sta DRUMS_REG
+            eor #$ff
             sta DRUMS_REG+1
             lda #0
             sta DRUMS_COUNT
@@ -1318,6 +1390,7 @@ DrumStart:  sec
 DrumStop:   lsr DRUMS_ON
             lda #0
             sta NOISE
+            sta VOICEL
             rts
 
 ; Handle ISR            
@@ -1327,10 +1400,10 @@ DrumServ:   dec DRUMS_COUNT
             cmp #$03
             bne drum_r
             lda #0
-            beq set_noise
-drum_reset: lda #$07
-            sec
-            sbc LEVEL
+            sta VOICEL
+            sta NOISE
+            rts
+drum_reset: lda #$06
             sta DRUMS_COUNT
             asl DRUMS_REG
             rol DRUMS_REG+1
@@ -1338,10 +1411,14 @@ drum_reset: lda #$07
             lda #$01
             ora DRUMS_REG
             sta DRUMS_REG
-play_drum:  lda #$90
+play_drum:  bit DRUMS_REG
+            bpl snare
+            lda #$b0            ; Bass Frequency
+            sta VOICEL
+snare:      lda #$d0            ; Snare Frequency
             bit DRUMS_REG+1
             bcc set_noise
-            lda #$f9
+            lda #$fd            ; Hats Frequency
 set_noise:  sta NOISE            
 drum_r:     rts
 
@@ -1367,7 +1444,7 @@ BitNumber:  .byte %00000001, %00000010, %00000100, %00001000
 
 ; Configuration for items and monters per level
 ItemChar:   .byte CHR_WRAITH,CHR_GOBLIN,CHR_FOOD,CHR_ARMOR,CHR_POTION
-ItemCount:  .byte 3,8,6,1,3
+ItemCount:  .byte 3,8,5,1,3
 
 ; Search pattern for automap, starting from index 7 (PTR minus 23)
 Autopatt:   .byte 1,1,20,2,20,1,1,0
@@ -1402,6 +1479,7 @@ FXTable:    .byte $ef,$11       ; 0- Item Pick-up
             .byte $3c,$48       ; 6- Level victory tune
             .byte $55,$34       ; 7- HP to Energy alert
             .byte $08,$3a       ; 8- Has Key
+            .byte $3c,$22       ; 9- Game Start
             
 ; Pad to 3583
 Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -1422,13 +1500,7 @@ Padding:    .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-
+            .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET

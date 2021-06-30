@@ -1,0 +1,64 @@
+The InfoMatrix:
+
+LV: The current Level number
+XP: Your current score
+HP: Remaining HP. When you reach 0 HP, the game is over.
+EN: Remaining Energy. Each time you move, you consume 1 Energy. When you reach 0
+    Energy, you will automatically lose 1 HP to gain 50 Energy.
+
+Under these is your Inventory bar. You may carry three types of items: Up to 8 Armor,
+up to 1 Key, and up to 8 Healing Potions.
+
+Items:
+
+Healing Potion
+    Each Level has 3 Healing Potions.
+    Press Fire to drink a Potion to heal 10 HP (up to your maximum).
+    Warning! Healing Potions may not always behave as expected!
+    You may carry a maximum of 8 Healing Potions.
+    
+Food
+    Each Level has 5 Food.
+    Food adds 50 Energy, up to a maximum of 200.
+
+Armor 
+    Each Level has 1 Armor.
+    Finding Armor adds 5 HP.
+    Each Armor adds 5 to your maximum HP. 
+    You may wear a maximum of 8 Armor (for a total of 40 maximum HP).
+
+Key
+    Each Level has 1 Key, which is defended by the Dragon.
+    When you defeat the Dragon, you may acquire the Key.
+    When you have the Key, you may open the Door to the next Level.
+
+Door 
+    Move to the Door while holding the Key to advance to the next Level.
+
+
+Monsters:
+
+When you encounter a Monster, it will challenge you to a Dance-Off. It will show
+you some dance moves, which you must repeat with the joystick. If you win, the
+Monster will be banished from the Dungeon. If you lose, you will lose a random 
+number of HP, as noted below. More info about Monsters:
+
+Goblin (Strength 1)
+    Each Level has 8 Goblins.
+    Dance Length: 1 step per Level, maximum of 4 steps
+    Damage: 1 HP per Level, minimum of 1
+    When you defeat a Goblin, there is a 25% chance that it will drop Food.
+    A defeated Goblin is banished from the Dungeon until the next Level.
+
+Wraith (Strength 2)
+    Each Level has 3 Wraiths.
+    Dance Length: 1 step per Level + 1
+    Damage: 2 HP per Level, minimum of 2
+    When you lose to a Wraith, there is a 25% chance that it will steal your map.
+    When you defeat a Wraith, it is not banished; it finds a new place to haunt.
+       
+Dragon (Strength 3)
+    Each Level has 1 Dragon, and it is always in the center of the Dungeon
+    Dance Length: 1 step per Level + 2
+    Damage: 3 HP per Level, minimum of 3
+    When you defeat the Dragon, it drops the Key to the Door.
