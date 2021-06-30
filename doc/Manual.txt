@@ -62,3 +62,10 @@ Dragon (Strength 3)
     Dance Length: 1 step per Level + 2
     Damage: 3 HP per Level, minimum of 3
     When you defeat the Dragon, it drops the Key to the Door.
+    
+Tips!
+    Try not to leave the Level without finding the Armor.
+    Heed your maximum HP (5 x Armor) to optimize the value of Healing Potions.
+    Heed the maximum damage (Strength x Level). Use Healing Potions before a Dance-Off.
+    Engage with Goblins, because they're easy to beat and might have Food.
+    Avoid engaging Wraiths, unless they're blocking your path.

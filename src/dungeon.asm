@@ -327,7 +327,7 @@ ISR:        inc TIME_L          ; Circumventing BASIC's clock, so advance it
             lda #COL_DRAGON     ; The other half of the time, keep the dragon
             bne paint_dr        ;   red
 flash_dr:   lda $9755           ; Get the dragon's current color
-            eor #$07            ; 010 => 101, and back again
+            eor #$06            ; 010 => 100, and back again
 paint_dr:   sta $9755           ; ,,
 drums:      bit DRUMS_ON        ; Handle drum player
             bpl isr_r           ; ,,
