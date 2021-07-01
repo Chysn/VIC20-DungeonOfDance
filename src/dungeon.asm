@@ -31,7 +31,6 @@ Launcher:   .byte $0b,$10,$2a,$00,$9e,$34,$31,$31
 HEIGHT      = 17                ; Size of maze, with each cell having a "wall"
 WIDTH       = 22                ;   surrounding it. 16x16 maze has 8x8 cells
 Y_OFFSET    = 6                 ; Y offset of maze
-SEED        = $c100             ; Start of pseudo-random data table
 HP_ARMOR    = 5                 ; Max HP per armor
 ST_ENERGY   = 200               ; Starting energy (loss of 1 per move)
 HP_ENERGY   = 50                ; Energy gained per HP consumed
@@ -108,8 +107,6 @@ CASECT      = $0291             ; Disable Commodore case
 PRTFIX      = $ddcd             ; Decimal display routine (A,X)
 TIME_L      = $a2               ; Jiffy counter low
 TIME_M      = $a1               ; Jiffy counter middle
-BASRND      = $e094             ; Routine for BASIC's RND() function
-RNDNUM      = $8d               ; Result storage location for RND()
 CLSR        = $e55f             ; Clear screen/home
 PLOT        = $fff0             ; PLOT 
 CHROUT      = $ffd2             ; Output one character
@@ -122,7 +119,7 @@ COOR_Y      = $f9               ; y coordinate
 COOR_X      = $fa               ; x coordinate
 PTR         = $fb               ; Screen pointer (2 bytes)
 LEVELS      = $fd               ; Number of levels on the stack
-P_RAND      = $a3               ; Pointer to pseudorandom table (2 bytes)
+P_RAND      = $8b               ; Pseudorandom seed (2 bytes)
 XP          = $b0               ; Experience points (2 bytes)
 HP          = $b2               ; Hit points
 ENERGY      = $b3               ; Energy
@@ -146,6 +143,7 @@ DRUMS_ON    = $02               ; Music player on
 DRUMS_REG   = $03               ; Music shift register (2 bytes)
 DRUMS_COUNT = $08               ; Music countdown
 HI_XP       = $b8               ; High score (2 bytes)
+RNDNUM      = $8d               ; Result storage location for random
 
 ; Sound Memory
 FX_REG      = $a6               ; Current effect frequency register
@@ -183,9 +181,6 @@ Welcome:    jsr SetupHW         ; Set up hardware
             sta VOICEM          ; ,,
             sta VOICEL          ; ,,
             sta NOISE           ; ,,
-            sta P_RAND          ; Create introductory maze
-            lda #>SEED          ; ,,
-            sta P_RAND+1        ; ,,
             jsr MakeMaze        ; ,,
             lda #0              ; Reset KEYSTAT so that dragon appears
             sta KEYSTAT         ; ,,
@@ -289,9 +284,8 @@ UsePotion:  lda POTIONS         ; Are there any potions to drink?
             bne potion_dec      ; If so, drink one
             jmp Main            ; Otherwise, back to Main
 potion_dec: dec POTIONS         ; Take away one potion
-            bit VIATIME         ; Check bit 6 and 7 of VIATIME
-            bpl AddHP           ;   If they're both set (25% of the time),
-            bvs Teleport        ;   teleport
+            jsr Rand3           ; About 25% of the time, teleport
+            beq Teleport        ; ,,
 AddHP:      lda #05             ; Launch healing potion effect
             jsr FXLaunch        ; ,,
             lda #POTION_HP      ; Add HP based on configuration value
@@ -302,13 +296,11 @@ Teleport:   lda #4              ; Launch teleport effect
             lda #CHR_OPEN       ; Disappear for a bit...
             sta UNDER           ; ,,
             jsr PlotChar        ; ,,
-new_x:      jsr BASRND          ; Find a new X location...
-            lda RNDNUM          ; ,,
+new_x:      jsr Rand31          ; Find a new X location...
             cmp #WIDTH          ; ...until it's in range
             bcs new_x           ; ,,
             sta COOR_X          ; Set it
-new_y:      jsr BASRND          ; Find a new Y location...
-            lda RNDNUM          ; ,,
+new_y:      jsr Rand31          ; Find a new Y location...
             cmp #HEIGHT         ; ...until it's in range
             bcs new_y           ; ,,
             sta COOR_Y          ; Set it
@@ -690,9 +682,7 @@ new_patt:   sta LAST_ENC        ; Set the last encounter
             lda #4              ;   ,,
             sta PATT_LEN        ;   ,,
 no_limit:   tay                 ; Y is the index, add notes to pattern backwards
-            lda #>SEED
-            sta P_RAND+1
--loop:      jsr RandDir
+-loop:      jsr Rand3           ; Get a random direction
             clc                 ; Add one to the random number so that it's a
             adc #1              ;   valid direction (1=N 2=E 3=S 4=W)
             sta PATTERN,y       ; Store the pattern in reverse order
@@ -851,23 +841,24 @@ vis_eff:    inc HORIZ           ; Rock the screen a bit, because you lost
             jsr Delay2          ; ,,
             dec VERT            ; ,,
             jsr Delay2          ; ,,
-            lda #0              ; Shut off the dragon burn noise effect
+            lda #0              ; Shut off the dragon burninator noise effect
             sta NOISE           ; ,, (if necessary)
             lda LAST_ENC        ; Multiply monster strength times level number
             jsr LevelMult       ;   for maximum HP loss
-            and VIATIME         ; AND with VIA timer to remove random bits
-            cmp LAST_ENC        ; Is the damage less than the monster strengh?
-            bcs dec_hp          ; If so, set it to the minimum
-            lda LAST_ENC        ; ,,
+            sta SCRPAD          ; Max HP loss in SCRPAD
+            jsr Rand255         ; Get random byte
+            and SCRPAD          ; Perform AND to potentially clear bytes
+ch_minimum: cmp LAST_ENC        ; Is the damage less than the minimum?
+            bcs dec_hp          ; Roll >= Min, so do the damage
+            lda LAST_ENC        ; Otherwise, set it to the minimum
 dec_hp:     jsr DecHP           ; Mark the HP loss
             lda #CHR_OPEN       ; Clear the cell under the player
             sta UNDER           ; ,,
             lda LAST_ENC        ; If the player was defeated by a wraith, there
             cmp #2              ;   is the possibility of additional mischief.
             bne lose_r          ;   About a quarter of the time, the wraith will
-            bit VIATIME         ;   take away the player's map
-            bpl lose_r          ;   ,,
-            bvc lose_r          ;   ,,
+            jsr Rand3           ;   take away the player's map
+            bne lose_r          ;   ,,
             lda #0              ;   ,,
             jsr WipeColor       ;   ,,
 lose_r:     lda #15             ; Put screen color back
@@ -919,13 +910,8 @@ av_north:   dec COOR_Y          ; Check North
             lda SCRPAD          ; A is a bitfield of unvisited directions           
             beq deadend            ; If no cells are unvisited, this is a dead end.
             sta SCRPAD          ; Choose a direction from the CheckAdj bitfield
-next_rand:  ldx #0              ;   * Get a pseudorandom number between 0 and 3
-            lda (P_RAND,x)      ;     ,,
-            and #$03            ;     ,,
-            tay                 ;     ,,
-            inc P_RAND          ;   * Increment the pseudorandom table counter
-            bne get_sp          ;     ,,
-            inc P_RAND+1        ;     ,,
+next_rand:  jsr Rand3           ;   * Get a pseudorandom number between 0 and 3
+            tay                 ;     Use it as an index
 get_sp:     lda BitNumber,y     ;   * See if the selected bit is one of the
             bit SCRPAD          ;     options for the new direction
             beq next_rand       ;     If it isn't, get a new p-random number
@@ -1084,8 +1070,7 @@ Position:   pha                 ; Store character for later
             sta PTR             ;   band, starting at $1ed6
             lda #$1e            ;   ,,
             sta PTR+1           ;   ,,
--loop:      jsr BASRND          ; Get a random number between 0 and 255
-            lda RNDNUM          ; ,,
+-loop:      jsr Rand255         ; Get a random number between 0 and 255
             tay                 ; Use this number as an index of $1ed6
             plp                 ; Pull processor status to check carry
             php                 ; ,,
@@ -1207,16 +1192,6 @@ Joystick:   lda VIA1PA          ; Read VIA1 port
 found_dir:  txa
             rts
 
-; Get Random Direction
-; In A (between 0 and 3)
-RandDir:    ldx #0              ; Get the next pseudorandom number
-            lda (P_RAND,x)      ; ,,
-            inc P_RAND          ; Increment the pseudorandom counter
-            bne randdir_r       ; ,,
-            inc P_RAND+1        ; ,,
-randdir_r:  and #$03            ; Constrain the value to a direction
-            rts
-
 Delay2:     lda #2
             ; Fall through to Delay
 
@@ -1225,7 +1200,28 @@ Delay:      clc
             adc TIME_L
 -loop:      cmp TIME_L
             bne loop
-            rts    
+            rts   
+            
+; Pseudo Random
+Rand3:      lda #%01000000      ; 2-bit
+            .byte $3c
+Rand31:     lda #%00001000      ; 5-bit
+            .byte $3c
+Rand255:    lda #%00000001      ; 8-bit
+PRand:      sta RNDNUM
+-loop:      lsr P_RAND
+            ror P_RAND+1
+            bcc shift_rnd
+            lda P_RAND
+            eor #$aa
+            sta P_RAND
+            lda P_RAND+1
+            eor #$2b
+            sta P_RAND+1
+shift_rnd:  rol RNDNUM
+            bcc loop
+            lda RNDNUM
+            rts
 
 ; Scroll Maze off the left size of the screen         
 ScrollMaze: lda #22             ; Set repeat counter
@@ -1254,7 +1250,7 @@ move_c:     sta (PTR),y         ;   ,,
             inc PTR+1           ; ,,
 scr_l:      dex                 ; 17 times
             bne loop_r          ; ,,
-            lda #$03            ; Short delay for each row scrolled out
+            lda #$04            ; Short delay for each row scrolled out
             jsr Delay           ; ,,
             lda TMP_IX          ; Fade out
             cmp #$0f            ; ,,
@@ -1282,6 +1278,12 @@ SetupHW:    lda #15             ; Set background color
             sta DRUMS_ON        ; ,,
             lda #$0a            ; Set volume
             sta VOLUME          ; ,,
+            lda TIME_L          ; Seed random number generator
+            ora #$01            ; ,,
+            sta P_RAND          ; ,,
+            lda VIATIME         ; ,,
+            ora #$80            ; ,,
+            sta P_RAND+1        ; ,,
             lda #<Welcome       ; Install the custom NMI (restart)
             sta NMINV           ; ,, 
             lda #>Welcome       ; ,,
@@ -1321,11 +1323,9 @@ InitLevel:  inc LEVEL           ; Increment player level counter
             sec                 ; Set changed flag for ShowScore
             ror CHANGED         ; ,,
             jsr ShowScore       ; Show the score while the maze is drawn
-            lda TIME_M          ; Get a pseudorandom maze table
+            lda TIME_L          ; Re-seed random number generator
+            ora #$01            ; ,,
             sta P_RAND          ; ,,
-            lda TIME_L          ; ,,
-            ora #$c1            ; ,, In high memory, at least $c100
-            sta P_RAND+1        ; ,,
             lda #0              ; Obfuscate the play area
             ;lda #6             ; Uncomment for maze diagnostics
             jsr WipeColor       ; ,,
@@ -1433,7 +1433,7 @@ FXLaunch:   sei                 ; Don't play anything while setting up
 ; Start Drum Track
 DrumStart:  sec
             ror DRUMS_ON
-            lda VIATIME
+            jsr Rand255
             sta DRUMS_REG
             eor #$ff
             sta DRUMS_REG+1
@@ -1554,8 +1554,8 @@ Pad_3583:   .asc "------------------------------------------",$0d
             .asc "https://creativecommons.org/licenses/by-nc"
             .asc "/4.0/legalcode.txt",$0d,$00
             .asc "------------------------------------------",$0d
-            .asc "ALL WORK AND NO PLAY MAKES JACK A DULL BOY",$0d
-            .asc "------------------"
+            .asc "------------------------------------------",$0d
+            .asc "--------------"
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
