@@ -33,10 +33,11 @@ WIDTH       = 22                ;   surrounding it. 16x16 maze has 8x8 cells
 Y_OFFSET    = 6                 ; Y offset of maze
 HP_ARMOR    = 5                 ; Max HP per armor
 ST_ENERGY   = 200               ; Starting energy (loss of 1 per move)
-HP_ENERGY   = 50                ; Energy gained per HP consumed
-FOOD_ENERGY = 50                ; Energy gained per food found
+HP_ENERGY   = 25                ; Energy gained per HP consumed
+FOOD_ENERGY = 25                ; Energy gained per food found
 POTION_HP   = 10                ; Max HP gained per potion used
-MAX_ITEMS   = 8                 ; Maximum armor and potions (each)
+MAX_ITEMS   = 6                 ; Maximum armor and potions (each)
+FINAL_LEVEL = 6                 ; Game is won at this level
 
 ; Characters
 CHR_WALL    = $20               ; Wall character
@@ -54,6 +55,7 @@ CHR_KEY     = $1b               ; Key character
 CHR_FILL    = $1c               ; Dungeon fill (all directions)
 CHR_READY   = $02               ; Ready to dance!
 CHR_BANISH  = $17               ; Monster is banished
+CHR_MIRROR  = $00               ; Magic Mirror Ball
 
 ; Monsters
 GOBLIN      = 1                 ; Goblin
@@ -69,6 +71,8 @@ COL_FOOD    = 5                 ; Food is green
 COL_GOBLIN  = 4                 ; Goblin is purple
 COL_WRAITH  = 1                 ; Wraith is white
 COL_DRAGON  = 2                 ; Dragon is red
+COL_MIRROR  = 4                 ; Magic Mirror Ball is purple
+COL_KEY     = 7                 ; Key is yellow
 
 ; Constants
 NORTH       = 1                 ; Compass Points, used in bitfields for
@@ -144,6 +148,7 @@ DRUMS_REG   = $03               ; Music shift register (2 bytes)
 DRUMS_COUNT = $08               ; Music countdown
 HI_XP       = $b8               ; High score (2 bytes)
 RNDNUM      = $8d               ; Result storage location for random
+HAS_MIRROR  = $09               ; Has Magic Mirror Ball
 
 ; Sound Memory
 FX_REG      = $a6               ; Current effect frequency register
@@ -160,13 +165,15 @@ FX_SPEED    = $aa               ; Effect countdown reset value
             sta HI_XP           ; ,,
             sta HI_XP+1         ; ,,
 Welcome:    jsr SetupHW         ; Set up hardware
+            sei                 ; Prevent drums until curated theme is loaded
             jsr DrumStart       ; Start soundtrack
-            lda #40             ; Curated opening theme
+            lda #$6c            ; Curated opening theme
             sta DRUMS_REG       ; ,,
-            lda #214            ; ,,
+            lda #$93            ; ,,
             sta DRUMS_REG+1     ; ,,
             lda #0              ; ,,
             sta DRUMS_COUNT     ; ,,
+            cli                 ; Start drums
             jsr CLSR            ; Clear the screen
             lda #<Name          ; Show Name
             ldy #>Name          ; ,,
@@ -176,11 +183,6 @@ Welcome:    jsr SetupHW         ; Set up hardware
             jsr PRTSTR          ; ,,
             lda #7              ; Set maze color
             jsr WipeColor       ; ,,
-            lda #$00            ; Create introductory maze
-            sta VOICEH          ; Shut off voices
-            sta VOICEM          ; ,,
-            sta VOICEL          ; ,,
-            sta NOISE           ; ,,
             jsr MakeMaze        ; ,,
             lda #0              ; Reset KEYSTAT so that dragon appears
             sta KEYSTAT         ; ,,
@@ -203,8 +205,9 @@ NextLevel:  jsr InitLevel
 ; Main action loop            
 Main:       lda KEYSTAT         ; Check for level completion with bit 5 of
             cmp #%00100000      ;   KEYSTAT
-            beq LevelUp         ;   ,,
-            lda HP              ; Check for player death
+            bne check_hp        ;   ,,
+            jmp LevelUp         ;   ,,
+check_hp:   lda HP              ; Check for player death
             beq QuestOver       ; ,,
 read_js:    jsr Joystick        ; Wait for joystick
             beq read_js         ; ,,
@@ -253,6 +256,9 @@ leave_char: lda UNDER           ; Replace the character under the player as
 QuestOver:  lda #<GameOver      ; Show Game Over notification
             ldy #>GameOver      ; ,,
             jsr PRTSTR          ; ,,
+            lda #<GameLost      ; Show Game Over notification
+            ldy #>GameLost      ; ,,
+            jsr PRTSTR          ; ,,            
             jsr DragDoor        ; ,,
             jsr ShowHIXP        ; Show high score
             lda #110            ; Set screen color to reveal maze
@@ -260,9 +266,25 @@ QuestOver:  lda #<GameOver      ; Show Game Over notification
             lda #CHR_OPEN       ; Disappear the player
             jsr PlotChar        ; ,,
             jmp Start           ; Back to wait for a new game
+
+; Game is Complete            
+Complete:   jsr DrumStart       ; Start the music
+            lda #<GameOver      ; Show Game Over notification
+            ldy #>GameOver      ; ,,
+            jsr PRTSTR          ; ,,
+            lda #<GameWon       ; Show Game Over notification
+            ldy #>GameWon       ; ,,
+            jsr PRTSTR          ; ,,            
+            jsr DragDoor        ; ,,
+            jsr ShowHIXP        ; Show high score
+            lda #CHR_OPEN       ; Disappear the player
+            jsr PlotChar        ; ,,
+            jmp Start           ; Back to wait for a new game                        
             
 ; Level Up
-LevelUp:    lda #6              ; Launch level up effect
+LevelUp:    bit HAS_MIRROR      ; Does player have the Magic Mirror Ball?
+            bmi Complete        ; If so, game is over!
+            lda #6              ; Launch level up effect
             jsr FXLaunch        ; ,,
             jsr DrumStart       ; Start drums
             lda #7              ; Show the rest of the maze
@@ -363,7 +385,10 @@ light:      ldy #7              ; The Autopatt table adds numbers of cells
             inc PTR+1           ;   ,,
 find_col:   ldx #0              ; Get character at pointer position
             lda (PTR,x)         ; ,,
-            cmp #CHR_OPEN       ; If it's an open space, do nothing
+            bne ch_opened       ; If this is the Magic Mirror Ball
+            lda #COL_MIRROR     ;   character, set as multi-color
+            bne set_color       ;   ,,
+ch_opened:  cmp #CHR_OPEN       ; If it's an open space, do nothing
             beq skip_col        ; ,,
             cmp #$3a            ; Indexed items start at $3a
             bcs color_item      ; If it's an indexed item, find its color
@@ -404,11 +429,17 @@ show_all:   lsr CHANGED         ; Clear the CHANGED flag
             ldy #>Labels        ; ,,
             jsr PRTSTR          ; ,,
             bit KEYSTAT         ; Show the key if the dragon has been defeated
-            bvc lev_num         ; ,,
+            bvc mirrorball      ; ,,
             lda #CHR_KEY        ; ,,
             sta $1e62           ; ,,
-            lda #7              ; ,,
+            lda #COL_KEY        ; ,,
             sta $9662           ; ,,
+mirrorball: bit HAS_MIRROR      ; Show the Magic Mirror Ball if obtained
+            bpl lev_num         ; ,,
+            lda #CHR_MIRROR     ; ,,
+            sta $1e61           ; ,,
+            lda #COL_MIRROR     ; ,,
+            sta $9661           ; ,,
 lev_num:    ldy #4              ; Show the level number
             ldx #2              ; ,,
             clc                 ; ,,
@@ -580,11 +611,18 @@ Encounter:  jsr Coor2Ptr        ; Update pointer based on new coordinates
             ldx #0              ; What's in the new cell?
             lda (PTR,x)         ; ,,
             cmp #CHR_DOOR       ; Process door
-            bne enc_key         ;   ,,
+            bne enc_mirror      ;   ,,
             bit KEYSTAT         ;   If the key has been picked up on this level,
             bvc locked          ;   bit 5 of KEYSTAT will be set. Otherwise, the
             lsr KEYSTAT         ;   door is considered "locked," and nothing
 locked:     rts                 ;   will happen.
+enc_mirror: cmp #CHR_MIRROR     ; Process Magic Mirror Ball
+            bne enc_key         ;   ,,
+            sec                 ;   Set Mirror Ball flag
+            ror HAS_MIRROR      ;   ,,
+            lda #0              ;   Launch the pick-up sound effect 
+            jsr FXLaunch        ;   ,,
+            jmp RemoveItem      ;   Remove the item from the maze
 enc_key:    cmp #CHR_KEY        ; Process key
             bne enc_wall        ;   If the key is encountered, launch the key
             lda #8              ;   sound effect...
@@ -791,14 +829,16 @@ ch_wraith:  cmp #WRAITH         ; Wraths don't leave the maze when defeated,
             lda #CHR_WRAITH     ;   ,,
             sec                 ;   ,,
             jsr Position        ;   ,,
-            tay                 ;   ,, (y is the wraith's position index)
+            tay                 ;   ,, (y is the Wraith's position index)
             lda #$78            ; Set the color of the moved wraith to black
             clc                 ; ,,
             adc PTR+1           ; ,,
             sta PTR+1           ; ,,
             lda #0              ; ,,
             sta (PTR),y         ; ,,
-            beq reset_enc       ; Complete
+            lda #1              ; Defeating a Wraith provides 1 HP
+            jsr IncHP           ; ,,
+            jmp reset_enc       ; Complete
 ch_goblin:  cmp #GOBLIN         ; There's a 1-in-4 chance that a defeated
             bne reset_enc       ;   goblin drops food
             bit VIATIME         ;   ,,
@@ -1004,6 +1044,10 @@ next_cell:  inc COOR_Y          ; Continue iterating across all characters in
 ; Based on an item and count table, populate goblins, wraiths, armor, food, and
 ; "healing" potions.                  
 Populate:   ldy #$04            ; Five items in the table
+            lda LEVEL           ; But if the player has reached the final
+            cmp #FINAL_LEVEL    ;   level, add one more, the Magic Mirror Ball!
+            bcc next_item       ;   ,,
+            iny                 ;   ,,
 next_item:  lda ItemCount,y     ; Get the count for the item at the index
             sta SCRPAD          ; ,,
 -loop:      lda ItemChar,y      ; Get the screen code for the item at the index
@@ -1310,6 +1354,7 @@ InitGame:   jsr DrumStop        ; Stop drums
             sta SCRCOL          ; ,,
             ldy #0              ; Reset level to 0 (incremented at first level)
             sty LEVEL           ; ,,
+            sty HAS_MIRROR      ; Reset Mirror Ball possession flag
             sty XP              ; Starting XP
             sty XP+1            ; ,,
             sty POTIONS         ; ,,
@@ -1342,7 +1387,7 @@ InitLevel:  inc LEVEL           ; Increment player level counter
             sta LAST_ENC        ; Reset last encounter
             lda #1              ; Set starting position of player
             sta COOR_X          ; ,,
-            lda #7              ; ,,
+            lda #8              ; ,,
             sta COOR_Y          ; ,,
             lda #CHR_PL_R       ; Set graphic to right-facing player
             sta PLAYER_CH       ; ,,
@@ -1441,7 +1486,7 @@ DrumStart:  sec
             ror DRUMS_ON
             jsr Rand255
             sta DRUMS_REG
-            eor #$ff
+            jsr Rand255
             sta DRUMS_REG+1
             lda #0
             sta DRUMS_COUNT
@@ -1491,16 +1536,20 @@ drum_r:     rts
 Name:       .asc $13,$05,$0d,"   DUNGEON OF DANCE",$00
 Intro:      .asc $0d,$0d,$1e,"  2021 JASON JUSTIAN",$0d,$0d
             .asc "      PRESS FIRE",$0d,$00
-Labels:     .asc $1e,$0d," LV@        XP@",$0d," HP@        EN@",$00
+Labels:     .asc $1e,$0d," LV         XP ",$0d," HP         EN ",$00
 
 Manual:     .asc $13,$05,$0d,""
 
 GameOver:   .asc $13,$05,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d
-            .asc $1d,$1d,$1d,$1d,$1d,"            ",$0d
-            .asc $1d,$1d,$1d,$1d,$1d," QUEST OVER ",$0d
+            .asc $1d,$1d,$1d,$1d,$1d,"            ",$0d,$00
+            
+GameLost:   .asc $1d,$1d,$1d,$1d,$1d," QUEST OVER ",$0d
             .asc $1d,$1d,$1d,$1d,$1d,"            ",$00
 
-HiXPLab:    .asc $1e,"HI@",$00
+GameWon:    .asc $1d,$1d,$1d,$1d,$1d," VICTORIOUS ",$0d
+            .asc $1d,$1d,$1d,$1d,$1d,"            ",$00
+
+HiXPLab:    .asc $1e,"HI ",$00
 
 ; Direction tables
 JoyTable:   .byte 0,$04,$80,$08,$10,$20            ; Corresponding direction bit
@@ -1510,8 +1559,8 @@ Compass:    .byte 0,1,2,4,8
 BitNumber:  .byte %00000001, %00000010, %00000100, %00001000
 
 ; Configuration for items and monters per level
-ItemChar:   .byte CHR_WRAITH,CHR_GOBLIN,CHR_FOOD,CHR_ARMOR,CHR_POTION
-ItemCount:  .byte 3,8,5,1,3
+ItemChar:   .byte CHR_WRAITH,CHR_GOBLIN,CHR_FOOD,CHR_ARMOR,CHR_POTION,CHR_MIRROR
+ItemCount:  .byte 3,8,5,1,3,1
 
 ; Search pattern for automap, starting from index 7 (PTR minus 23)
 Autopatt:   .byte 1,1,20,2,20,1,1,0
@@ -1537,31 +1586,28 @@ Dance:      .byte 0,$1d,$0d,$1e,$0b
 ;   (3) High nybble of the second byte (L) is the length in jiffies x 16
 ;       * Between approx. 1/4 sec and 4 sec in length
 ;   (4) Low nybble of second byte (S) is speed in jiffies
-FXTable:    .byte $ef,$11       ; 0- Item Pick-up
-            .byte $09,$13       ; 1- Danceoff won
-            .byte $d0,$13       ; 2- Danceoff lost
-            .byte $01,$25       ; 3- Eat food
-            .byte $c8,$46       ; 4- Teleported
-            .byte $0f,$21       ; 5- Healing potion
-            .byte $3c,$48       ; 6- Level victory tune
-            .byte $55,$34       ; 7- HP to Energy alert
-            .byte $08,$3a       ; 8- Has Key
-            .byte $3c,$22       ; 9- Game Start
+FXTable:    .byte $ef,$11       ; 0 - Item Pick-up
+            .byte $09,$13       ; 1 - Danceoff won
+            .byte $d0,$13       ; 2 - Danceoff lost
+            .byte $01,$25       ; 3 - Eat food
+            .byte $c8,$46       ; 4 - Teleported
+            .byte $0f,$21       ; 5 - Healing potion
+            .byte $3c,$48       ; 6 - Level victory tune
+            .byte $55,$34       ; 7 - HP to Energy alert
+            .byte $19,$52       ; 8 - Has Key
+            .byte $3c,$22       ; 9 - Game Start
             .byte $c0,$48       ; 10- Map Stolen
             
 ; Pad to 3583
 Pad_3583:   .asc "------------------------------------------",$0d
             .asc "(c) 2021 JASON JUSTIAN, BEIGE MAZE VIC LAB",$0d
-            .asc "------------------------------------------",$0d
             .asc "THIS   SOFTWARE  IS   RELEASED  UNDER  THE",$0d
             .asc "CREATIVE COMMONS ATTRIBUTION-NONCOMMERCIAL",$0d
             .asc "4.0 INTERNATIONAL LICENSE.",$0d
             .asc "THE  LICENSE  SHOULD BE INCLUDED WITH THIS",$0d
             .asc "FILE. IF NOT, PLEASE SEE:",$0d
             .asc "https://creativecommons.org/licenses/by-nc"
-            .asc "/4.0/legalcode.txt",$0d,$00
-            .asc "------------------------------------------"
-            .asc "-------------------------------------"
+            .asc "/4.0/legalcode.txt",$00
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
@@ -1581,7 +1627,8 @@ CharSet:    ; Letters (* used,- reassignable)
             ; PRESS FIRE
             ; LV@ HP@ XP@ EN@
             ; QUEST OVER
-            .byte $00,$00,$20,$10,$00,$20,$10,$00 ; Colon
+            ; VICTORIOUS
+            .byte $08,$1c,$2a,$55,$6b,$55,$2a,$1c ; Magic Mirror Ball
             .byte $10,$28,$44,$54,$82,$fe,$82,$00 ; A *
             ;.byte $fc,$42,$62,$9c,$62,$42,$fc,$00 ; B -
             .byte $38,$38,$10,$7c,$92,$38,$44,$44 ; Ready to go!   ($02)
