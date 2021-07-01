@@ -33,11 +33,11 @@ WIDTH       = 22                ;   surrounding it. 16x16 maze has 8x8 cells
 Y_OFFSET    = 6                 ; Y offset of maze
 HP_ARMOR    = 5                 ; Max HP per armor
 ST_ENERGY   = 200               ; Starting energy (loss of 1 per move)
-HP_ENERGY   = 40                ; Energy gained per HP consumed
-FOOD_ENERGY = 40                ; Energy gained per food found
+HP_ENERGY   = 25                ; Energy gained per HP consumed
+FOOD_ENERGY = 25                ; Energy gained per food found
 POTION_HP   = 10                ; Max HP gained per potion used
 MAX_ITEMS   = 6                 ; Maximum armor and potions (each)
-FINAL_LEVEL = 6                 ; Game is won at this level
+FINAL_LEVEL = 7                 ; Game can be won at this level
 
 ; Characters
 CHR_WALL    = $20               ; Wall character
@@ -165,15 +165,6 @@ FX_SPEED    = $aa               ; Effect countdown reset value
             sta HI_XP           ; ,,
             sta HI_XP+1         ; ,,
 Welcome:    jsr SetupHW         ; Set up hardware
-            sei                 ; Prevent drums until curated theme is loaded
-            jsr DrumStart       ; Start soundtrack
-            lda #$6c            ; Curated opening theme
-            sta DRUMS_REG       ; ,,
-            lda #$93            ; ,,
-            sta DRUMS_REG+1     ; ,,
-            lda #0              ; ,,
-            sta DRUMS_COUNT     ; ,,
-            cli                 ; Start drums
             jsr CLSR            ; Clear the screen
             lda #<Name          ; Show Name
             ldy #>Name          ; ,,
@@ -184,6 +175,15 @@ Welcome:    jsr SetupHW         ; Set up hardware
             lda #7              ; Set maze color
             jsr WipeColor       ; ,,
             jsr MakeMaze        ; ,,
+            sei                 ; Prevent drums until curated theme is loaded
+            jsr DrumStart       ; Start soundtrack
+            lda #$6c            ; Curated opening theme
+            sta DRUMS_REG       ; ,,
+            lda #$93            ; ,,
+            sta DRUMS_REG+1     ; ,,
+            lda #0              ; ,,
+            sta DRUMS_COUNT     ; ,,
+            cli                 ; Start drums
             lda #0              ; Reset KEYSTAT so that dragon appears
             sta KEYSTAT         ; ,,
             jsr DragDoor        ; Show dragon and door
@@ -253,40 +253,40 @@ leave_char: lda UNDER           ; Replace the character under the player as
             beq Main
  
 ; Quest Over        
-QuestOver:  lda #<GameOver      ; Show Game Over notification
+QuestOver:  lda #CHR_OPEN       ; Disappear the player
+            jsr PlotChar        ; ,,
+            lda #<GameOver      ; Show Game Over notification
             ldy #>GameOver      ; ,,
             jsr PRTSTR          ; ,,
             lda #<GameLost      ; Show Game Over notification
             ldy #>GameLost      ; ,,
-            jsr PRTSTR          ; ,,            
-            jsr DragDoor        ; ,,
-            jsr ShowHIXP        ; Show high score
+game_done:  jsr PRTSTR          ; ,,
             lda #110            ; Set screen color to reveal maze
             sta SCRCOL          ; ,,
-            lda #CHR_OPEN       ; Disappear the player
-            jsr PlotChar        ; ,,
+            jsr DragDoor        ; ,,
+            jsr ShowHIXP        ; Show high score
             jmp Start           ; Back to wait for a new game
 
-; Game is Complete            
-Complete:   jsr DrumStart       ; Start the music
+; Game is Complete 
+; Comes from LevelUp, which plays the appropriate sounds           
+Complete:   lda #50             ; Add XP for winning
+            jsr IncXP           ; ,,
+            sec                 ; Set changed flag for Score
+            ror CHANGED         ; ,,
+            jsr ShowScore       ; ,,
             lda #<GameOver      ; Show Game Over notification
             ldy #>GameOver      ; ,,
             jsr PRTSTR          ; ,,
             lda #<GameWon       ; Show Game Over notification
             ldy #>GameWon       ; ,,
-            jsr PRTSTR          ; ,,            
-            jsr DragDoor        ; ,,
-            jsr ShowHIXP        ; Show high score
-            lda #CHR_OPEN       ; Disappear the player
-            jsr PlotChar        ; ,,
-            jmp Start           ; Back to wait for a new game                        
+            jmp game_done       ; Go back to QuestOver to finish
             
 ; Level Up
-LevelUp:    bit HAS_MIRROR      ; Does player have the Magic Mirror Ball?
-            bmi Complete        ; If so, game is over!
-            lda #6              ; Launch level up effect
+LevelUp:    lda #6              ; Launch level up effect
             jsr FXLaunch        ; ,,
             jsr DrumStart       ; Start drums
+            bit HAS_MIRROR      ; Does player have the Magic Mirror Ball?
+            bmi Complete        ; If so, game is over!            
             lda #7              ; Show the rest of the maze
             jsr WipeColor       ; ,,
             lda #5              ; Earn 5XP per level
@@ -308,7 +308,7 @@ UsePotion:  lda POTIONS         ; Are there any potions to drink?
 potion_dec: dec POTIONS         ; Take away one potion
             jsr Rand3           ; About 25% of the time, teleport
             beq Teleport        ; ,,
-AddHP:      lda #05             ; Launch healing potion effect
+AddHP:      lda #5              ; Launch healing potion effect
             jsr FXLaunch        ; ,,
             lda #POTION_HP      ; Add HP based on configuration value
             jsr IncHP           ; ,,
@@ -437,9 +437,9 @@ show_all:   lsr CHANGED         ; Clear the CHANGED flag
 mirrorball: bit HAS_MIRROR      ; Show the Magic Mirror Ball if obtained
             bpl lev_num         ; ,,
             lda #CHR_MIRROR     ; ,,
-            sta $1e61           ; ,,
+            sta $1e60           ; ,,
             lda #COL_MIRROR     ; ,,
-            sta $9661           ; ,,
+            sta $9660           ; ,,
 lev_num:    ldy #4              ; Show the level number
             ldx #2              ; ,,
             clc                 ; ,,
@@ -624,8 +624,8 @@ enc_mirror: cmp #CHR_MIRROR     ; Process Magic Mirror Ball
             jsr FXLaunch        ;   ,,
             jmp RemoveItem      ;   Remove the item from the maze
 enc_key:    cmp #CHR_KEY        ; Process key
-            bne enc_wall        ;   If the key is encountered, launch the key
-            lda #8              ;   sound effect...
+            bne enc_wall        ;   If the key is encountered, launch the
+            lda #0              ;   pick-up sound effect...
             jsr FXLaunch        ;   ,,
             jsr RemoveItem      ;   ...remove the key from the maze
             lsr KEYSTAT         ;   then set bit 5 so door can be unlocked
@@ -712,14 +712,15 @@ new_patt:   sta LAST_ENC        ; Set the last encounter
             adc LEVEL           ; ,,
             sbc #$00            ; ,, (Carry is clear, so subtracting 1)
             sta PATT_LEN        ; ,,
-            ldy LAST_ENC        ; If the encountered monster is a goblin,
-            cpy #GOBLIN         ;   then limit the pattern length to 4,
-            bne no_limit        ;   regardless of level
-            cmp #4              ;   ,,
-            bcc no_limit        ;   ,,
-            lda #4              ;   ,,
-            sta PATT_LEN        ;   ,,
-no_limit:   tay                 ; Y is the index, add notes to pattern backwards
+            
+            ldy LAST_ENC        ; Y is an index to look up the pattern length
+            cmp MaxLen-1,y      ; Compare computed pattern to table pattern
+            bcc no_limit        ; If greater or equal, look up the pattern
+            lda MaxLen-1,y      ;   length and
+            sta PATT_LEN        ;   store it
+                         
+no_limit:   lda PATT_LEN
+            tay                 ; Y is the index, add notes to pattern backwards
 -loop:      jsr Rand3           ; Get a random direction
             clc                 ; Add one to the random number so that it's a
             adc #1              ;   valid direction (1=N 2=E 3=S 4=W)
@@ -741,7 +742,7 @@ DOSetup:    ldy PTR             ; Store the monster position, so it can be
             tax
             lda Note,x
             sta VOICEM
-            lda Dance,x
+            lda Dance-1,x
             ldx #0
             sta (PTR,x)
             lda #21             ; Starting point is 1/3 second delay
@@ -786,7 +787,7 @@ patt_delay: jsr Delay
 hit_move:   tax
             lda Note,x
             sta VOICEM
-            lda Dance,x
+            lda Dance-1,x
             ldx #0
             sta (PTR,x)
             lda #13             ; Set screen color to indicate successful
@@ -803,13 +804,13 @@ hit_move:   tax
             dey
             bne loop
 win:        jsr DrumStop
+            lda #1              ; Launch victory effect
+            jsr FXLaunch        ; ,,
             lda #CHR_BANISH     ; Show the monster banishment graphic
             ldx #0              ; ,,
             sta (ENC_PTR,x)     ; ,,
             lda LAST_ENC        ; Get the monster strength
             pha
-            lda #1              ; Launch victory effect
-            jsr FXLaunch        ; ,,
             jsr LevelMult       ; Increase XP based on level
             jsr IncXP           ; ,,
             lda #$10            ; Delay to show the banishment graphic
@@ -899,7 +900,7 @@ dec_hp:     jsr DecHP           ; Mark the HP loss
             bne lose_r          ;   About a quarter of the time, the wraith will
             jsr Rand3           ;   take away the player's map
             bne lose_r          ;   ,,
-            lda #10             ; Launch lost map effect
+            lda #9              ; Launch lost map effect
             jsr FXLaunch        ; ,,
             lda #0              ; Steal the map
             jsr WipeColor       ; ,,
@@ -1314,18 +1315,18 @@ fade_out:   sta VOLUME          ; ,,
 ; Set up hardware
 SetupHW:    lda #15             ; Set background color
             sta SCRCOL          ; ,,
-            lda #$ff            ; Set custom character location
-            sta VICCR5          ; ,,
-            lda #$7f            ; Set DDR to read East
-            sta VIA2DD          ; ,,
-            lda #$80            ; Disable Commodore-Shift
-            sta CASECT          ; ,,
             lda #0              ; Turn off music player
             sta DRUMS_ON        ; ,,
             sta NOISE           ; Turn off all voices      
             sta VOICEL          ; ,,
             sta VOICEM          ; ,,
             sta VOICEH          ; ,,
+            lda #$ff            ; Set custom character location
+            sta VICCR5          ; ,,
+            lda #$7f            ; Set DDR to read East
+            sta VIA2DD          ; ,,
+            lda #$80            ; Disable Commodore-Shift
+            sta CASECT          ; ,,
             lda #$0a            ; Set volume
             sta VOLUME          ; ,,
             lda TIME_L          ; Seed random number generator
@@ -1348,7 +1349,7 @@ SetupHW:    lda #15             ; Set background color
 
 ; Initialize Game
 InitGame:   jsr DrumStop        ; Stop drums
-            lda #9              ; Launch game start sound
+            lda #8              ; Launch game start sound
             jsr FXLaunch        ; ,,
             lda #15             ; Screen color changes after game, so reset it
             sta SCRCOL          ; ,,
@@ -1560,7 +1561,7 @@ BitNumber:  .byte %00000001, %00000010, %00000100, %00001000
 
 ; Configuration for items and monters per level
 ItemChar:   .byte CHR_WRAITH,CHR_GOBLIN,CHR_FOOD,CHR_ARMOR,CHR_POTION,CHR_MIRROR
-ItemCount:  .byte 3,8,5,1,3,1
+ItemCount:  .byte 3,8,6,1,3,1
 
 ; Search pattern for automap, starting from index 7 (PTR minus 23)
 Autopatt:   .byte 1,1,20,2,20,1,1,0
@@ -1575,7 +1576,12 @@ Note:       .byte 0,219,207,194,214
 
 ; Dance Table
 ; Dance moves based on direction
-Dance:      .byte 0,$1d,$0d,$1e,$0b
+Dance:      .byte $1d,$0d,$1e,$0b
+
+; Max Pattern Length
+;                 Goblin,Wraith,Dragon
+MaxLen:     .byte 4,     6,     20
+;.byte 1,1,1 ; Diagnostic super-easy mode
 
 ; Sound effects for the sound effects player
 ; Each effect has four parameters (DFFFFFFF LLLLSSSS)
@@ -1594,20 +1600,20 @@ FXTable:    .byte $ef,$11       ; 0 - Item Pick-up
             .byte $0f,$21       ; 5 - Healing potion
             .byte $3c,$48       ; 6 - Level victory tune
             .byte $55,$34       ; 7 - HP to Energy alert
-            .byte $19,$52       ; 8 - Has Key
-            .byte $3c,$22       ; 9 - Game Start
-            .byte $c0,$48       ; 10- Map Stolen
+            .byte $3c,$22       ; 8 - Game Start
+            .byte $c0,$48       ; 9 - Map Stolen
             
 ; Pad to 3583
 Pad_3583:   .asc "------------------------------------------",$0d
-            .asc "(c) 2021 JASON JUSTIAN, BEIGE MAZE VIC LAB",$0d
-            .asc "THIS   SOFTWARE  IS   RELEASED  UNDER  THE",$0d
+            .asc "(C) 2021 JASON JUSTIAN, BEIGE MAZE VIC LAB",$0d
+            .asc "THIS SOFTWARE IS RELEASED UNDER THE",$0d
             .asc "CREATIVE COMMONS ATTRIBUTION-NONCOMMERCIAL",$0d
             .asc "4.0 INTERNATIONAL LICENSE.",$0d
-            .asc "THE  LICENSE  SHOULD BE INCLUDED WITH THIS",$0d
+            .asc "THE LICENSE SHOULD BE INCLUDED WITH THIS",$0d
             .asc "FILE. IF NOT, PLEASE SEE:",$0d
             .asc "https://creativecommons.org/licenses/by-nc"
             .asc "/4.0/legalcode.txt",$00
+            .asc "---------------"
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
