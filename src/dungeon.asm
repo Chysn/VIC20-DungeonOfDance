@@ -859,8 +859,10 @@ dec_hp:     jsr DecHP           ; Mark the HP loss
             bne lose_r          ;   About a quarter of the time, the wraith will
             jsr Rand3           ;   take away the player's map
             bne lose_r          ;   ,,
-            lda #0              ;   ,,
-            jsr WipeColor       ;   ,,
+            lda #10             ; Launch lost map effect
+            jsr FXLaunch        ; ,,
+            lda #0              ; Steal the map
+            jsr WipeColor       ; ,,
 lose_r:     lda #15             ; Put screen color back
             sta SCRCOL          ; ,,
             rts
@@ -1276,6 +1278,10 @@ SetupHW:    lda #15             ; Set background color
             sta CASECT          ; ,,
             lda #0              ; Turn off music player
             sta DRUMS_ON        ; ,,
+            sta NOISE           ; Turn off all voices      
+            sta VOICEL          ; ,,
+            sta VOICEM          ; ,,
+            sta VOICEH          ; ,,
             lda #$0a            ; Set volume
             sta VOLUME          ; ,,
             lda TIME_L          ; Seed random number generator
@@ -1535,12 +1541,13 @@ FXTable:    .byte $ef,$11       ; 0- Item Pick-up
             .byte $09,$13       ; 1- Danceoff won
             .byte $d0,$13       ; 2- Danceoff lost
             .byte $01,$25       ; 3- Eat food
-            .byte $d0,$23       ; 4- Teleported
+            .byte $c8,$46       ; 4- Teleported
             .byte $0f,$21       ; 5- Healing potion
             .byte $3c,$48       ; 6- Level victory tune
             .byte $55,$34       ; 7- HP to Energy alert
             .byte $08,$3a       ; 8- Has Key
             .byte $3c,$22       ; 9- Game Start
+            .byte $c0,$48       ; 10- Map Stolen
             
 ; Pad to 3583
 Pad_3583:   .asc "------------------------------------------",$0d
@@ -1553,9 +1560,8 @@ Pad_3583:   .asc "------------------------------------------",$0d
             .asc "FILE. IF NOT, PLEASE SEE:",$0d
             .asc "https://creativecommons.org/licenses/by-nc"
             .asc "/4.0/legalcode.txt",$0d,$00
-            .asc "------------------------------------------",$0d
-            .asc "------------------------------------------",$0d
-            .asc "--------------"
+            .asc "------------------------------------------"
+            .asc "-------------------------------------"
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
