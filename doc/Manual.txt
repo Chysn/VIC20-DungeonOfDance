@@ -1,15 +1,13 @@
-The InfoMatrix:
+The Status Display:
 
 LV: The current Level number
 XP: Your current score
 HP: Remaining HP. When you reach 0 HP, the game is over.
 EN: Remaining Energy. Each time you move, you consume 1 Energy. When you reach 0
-    Energy, you will automatically lose 1 HP to gain 25 Energy.
+    Energy, you will automatically consume 1 HP to gain 30 Energy.
 
-Under these is your Inventory bar. You may carry three types of items: Up to 8 Armor,
-up to 1 Key, and up to 8 Healing Potions.
-
-
+Under these is your Inventory bar. You may carry four types of items: Up to 6 Armor,
+up to 1 Key, up to 6 Healing Potions, and the Magic Mirror Ball.
 
 Items:
 
@@ -21,7 +19,7 @@ Healing Potion
     
 Food
     Each Level has 6 Food.
-    Food adds 25 Energy, up to a maximum of 200.
+    Food adds 30 Energy, up to a maximum of 200.
 
 Armor 
     Each Level has 1 Armor.
@@ -38,10 +36,8 @@ Door
     Move to the Door while holding the Key to advance to the next Level.
 
 Magic Mirror Ball
-    Starting at Level 6, the Magic Mirror Ball will be hidden in the Dungeon.
+    Starting at Level 7, the Magic Mirror Ball will be hidden in the Dungeon.
     Exit the Level while holding the Mirror Ball, and you win the game!
-
-
 
 Monsters:
 

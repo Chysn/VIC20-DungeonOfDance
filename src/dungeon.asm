@@ -33,11 +33,11 @@ WIDTH       = 22                ;   surrounding it. 16x16 maze has 8x8 cells
 Y_OFFSET    = 6                 ; Y offset of maze
 HP_ARMOR    = 5                 ; Max HP per armor
 ST_ENERGY   = 200               ; Starting energy (loss of 1 per move)
-HP_ENERGY   = 25                ; Energy gained per HP consumed
-FOOD_ENERGY = 25                ; Energy gained per food found
+HP_ENERGY   = 31                ; Energy gained per HP used (+1 for movement)
+FOOD_ENERGY = 31                ; Energy gained per food (+1 for movement)
 POTION_HP   = 10                ; Max HP gained per potion used
 MAX_ITEMS   = 6                 ; Maximum armor and potions (each)
-FINAL_LEVEL = 7                 ; Game can be won at this level
+FINAL_LEVEL = 6                 ; Game can be won at this level
 
 ; Characters
 CHR_WALL    = $20               ; Wall character
@@ -269,33 +269,37 @@ game_done:  jsr PRTSTR          ; ,,
 
 ; Game is Complete 
 ; Comes from LevelUp, which plays the appropriate sounds           
-Complete:   lda #50             ; Add XP for winning
+Victory:    lda #50             ; Add XP for winning
             jsr IncXP           ; ,,
-            sec                 ; Set changed flag for Score
-            ror CHANGED         ; ,,
             jsr ShowScore       ; ,,
             lda #<GameOver      ; Show Game Over notification
             ldy #>GameOver      ; ,,
             jsr PRTSTR          ; ,,
             lda #<GameWon       ; Show Game Over notification
             ldy #>GameWon       ; ,,
-            jmp game_done       ; Go back to QuestOver to finish
+            jsr PRTSTR          ; ,,
+            jsr DragDoor        ; ,,
+            jsr ShowHIXP        ; Show high score
+            jsr Wait4Fire       ; When Fire is pressed, set the screen
+            lda #15             ;   color back and continue to the
+            sta SCRCOL          ;   next level
+            jmp continue        ;   ,,
             
 ; Level Up
 LevelUp:    lda #6              ; Launch level up effect
             jsr FXLaunch        ; ,,
             jsr DrumStart       ; Start drums
-            bit HAS_MIRROR      ; Does player have the Magic Mirror Ball?
-            bmi Complete        ; If so, game is over!            
             lda #7              ; Show the rest of the maze
             jsr WipeColor       ; ,,
             lda #5              ; Earn 5XP per level
             jsr LevelMult       ; ,,
             jsr IncXP           ; ,,
-            jsr ShowScore       ; Show the score with the new XP
+            bit HAS_MIRROR      ; Does player have the Magic Mirror Ball?
+            bmi Victory         ; If so, game is over!            
             lda #180            ; Delay for 3 seconds before starting
+            jsr ShowScore       ; Show the score with the new XP
             jsr Delay           ;   the next level
-            jsr ScrollMaze      ; Scroll the maze off to the left
+continue:   jsr ScrollMaze      ; Scroll the maze off to the left
             jsr DrumStop        ; Stop drums and reset volume
             lda #$0a            ; ,,
             sta VOLUME          ; ,,
@@ -349,9 +353,7 @@ ISR:        inc TIME_L          ; Circumventing BASIC's clock, so advance it
 flash_dr:   lda $973f           ; Get the dragon's current color
             eor #$06            ; 010 => 100, and back again
 paint_dr:   sta $973f           ; ,,
-drums:      bit DRUMS_ON        ; Handle drum player
-            bpl isr_r           ; ,,
-            jsr DrumServ        ; ,,
+drums:      jsr DrumServ        ; ,,
 isr_r:      jmp IRQ
 
 
@@ -385,8 +387,12 @@ light:      ldy #7              ; The Autopatt table adds numbers of cells
             inc PTR+1           ;   ,,
 find_col:   ldx #0              ; Get character at pointer position
             lda (PTR,x)         ; ,,
-            bne ch_opened       ; If this is the Magic Mirror Ball
-            lda #COL_MIRROR     ;   character, set as multi-color
+            bne ch_door         ; If this is the Magic Mirror Ball
+            lda #COL_MIRROR     ;   character, set as its color
+            bne set_color       ;   ,,
+ch_door:    cmp #CHR_DOOR       ; If this is the Door, set it to its
+            bne ch_opened       ;   color
+            lda #COL_DOOR       ;   ,,
             bne set_color       ;   ,,
 ch_opened:  cmp #CHR_OPEN       ; If it's an open space, do nothing
             beq skip_col        ; ,,
@@ -1048,7 +1054,9 @@ Populate:   ldy #$04            ; Five items in the table
             lda LEVEL           ; But if the player has reached the final
             cmp #FINAL_LEVEL    ;   level, add one more, the Magic Mirror Ball!
             bcc next_item       ;   ,,
-            iny                 ;   ,,
+            bit HAS_MIRROR      ;   Unless the player already HAS it
+            bmi next_item       ;   ,,
+            iny                 ; Add the Magic Mirror Ball index position
 next_item:  lda ItemCount,y     ; Get the count for the item at the index
             sta SCRPAD          ; ,,
 -loop:      lda ItemChar,y      ; Get the screen code for the item at the index
@@ -1501,7 +1509,9 @@ DrumStop:   lsr DRUMS_ON
             rts
 
 ; Handle ISR            
-DrumServ:   dec DRUMS_COUNT
+DrumServ:   bit DRUMS_ON        ; Handle drum player
+            bpl drum_r          ; ,,
+            dec DRUMS_COUNT
             bmi drum_reset
             lda DRUMS_COUNT
             cmp #$03
@@ -1604,8 +1614,7 @@ FXTable:    .byte $ef,$11       ; 0 - Item Pick-up
             .byte $c0,$48       ; 9 - Map Stolen
             
 ; Pad to 3583
-Pad_3583:   .asc "------------------------------------------",$0d
-            .asc "(C) 2021 JASON JUSTIAN, BEIGE MAZE VIC LAB",$0d
+Pad_3583:   .asc "(C) 2021 JASON JUSTIAN, BEIGE MAZE VIC LAB",$0d
             .asc "THIS SOFTWARE IS RELEASED UNDER THE",$0d
             .asc "CREATIVE COMMONS ATTRIBUTION-NONCOMMERCIAL",$0d
             .asc "4.0 INTERNATIONAL LICENSE.",$0d
@@ -1613,7 +1622,8 @@ Pad_3583:   .asc "------------------------------------------",$0d
             .asc "FILE. IF NOT, PLEASE SEE:",$0d
             .asc "https://creativecommons.org/licenses/by-nc"
             .asc "/4.0/legalcode.txt",$00
-            .asc "---------------"
+            .asc "--------------------------------"
+            
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CUSTOM CHARACTER SET
