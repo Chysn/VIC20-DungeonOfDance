@@ -106,6 +106,7 @@ VIA1DD      = $9113             ; Data direction register for joystick
 VIA1PA      = $9111             ; Joystick port (up, down, left, fire)
 VIA2DD      = $9122             ; Data direction register for joystick
 VIA2PB      = $9120             ; Joystick port (for right)
+VIA2T1CL    = $9124             ; Timer 1 LSB
 PRTSTR      = $cb1e             ; Print from data (Y,A)
 CASECT      = $0291             ; Disable Commodore case
 PRTFIX      = $ddcd             ; Decimal display routine (A,X)
@@ -333,7 +334,11 @@ update_sc:  sec                 ; Mark the scoresheet changed, so that the
             jsr ShowScore       ; Show the score header
             jmp debounce         
                         
-; Interrupt Service Routine            
+; Interrupt Service Routine 
+; Replaces the BASIC ISR and performs these functions
+;   - Advances the timer, used for delays
+;   - Flashes the Dragon, when it's there
+;   - Advances the drum player         
 ISR:        inc TIME_L          ; Circumventing BASIC's clock, so advance it
             jsr FXService       ; Play any sound effects that are going on
             lda KEYSTAT         ; If the dragon hasn't already been defeated,
@@ -346,7 +351,13 @@ flash_dr:   lda $973f           ; Get the dragon's current color
             eor #$06            ; 010 => 100, and back again
 paint_dr:   sta $973f           ; ,,
 drums:      jsr DrumServ        ; ,,
-isr_r:      jmp IRQ
+isr_r:      lda	VIA2T1CL        ; Read timer flag to clear interrupt
+            pla                 ; Restore Y, X, and A
+            tay                 ; ,,
+            pla                 ; ,,
+            tax                 ; ,,
+            pla                 ; ,,
+            rti                 ; Return from interrupt
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1614,7 +1625,7 @@ Pad_3583:   .asc "(C) 2021 JASON JUSTIAN, BEIGE MAZE VIC LAB",$0d
             .asc "FILE. IF NOT, PLEASE SEE:",$0d
             .asc "https://creativecommons.org/licenses/by-nc"
             .asc "/4.0/legalcode.txt",$00
-            .asc "----------------------------------------------"
+            .asc "----------------------------------------"
             
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
