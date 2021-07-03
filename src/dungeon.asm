@@ -175,15 +175,7 @@ Welcome:    jsr SetupHW         ; Set up hardware
             lda #7              ; Set maze color
             jsr WipeColor       ; ,,
             jsr MakeMaze        ; ,,
-            sei                 ; Prevent drums until curated theme is loaded
             jsr DrumStart       ; Start soundtrack
-            lda #$6c            ; Curated opening theme
-            sta DRUMS_REG       ; ,,
-            lda #$93            ; ,,
-            sta DRUMS_REG+1     ; ,,
-            lda #0              ; ,,
-            sta DRUMS_COUNT     ; ,,
-            cli                 ; Start drums
             lda #0              ; Reset KEYSTAT so that dragon appears
             sta KEYSTAT         ; ,,
             jsr DragDoor        ; Show dragon and door
@@ -253,7 +245,9 @@ leave_char: lda UNDER           ; Replace the character under the player as
             beq Main
  
 ; Quest Over        
-QuestOver:  lda #CHR_OPEN       ; Disappear the player
+QuestOver:  lda #7              ; Show the rest of the maze
+            jsr WipeColor       ; ,,
+            lda #CHR_OPEN       ; Disappear the player
             jsr PlotChar        ; ,,
             lda #<GameOver      ; Show Game Over notification
             ldy #>GameOver      ; ,,
@@ -261,8 +255,6 @@ QuestOver:  lda #CHR_OPEN       ; Disappear the player
             lda #<GameLost      ; Show Game Over notification
             ldy #>GameLost      ; ,,
 game_done:  jsr PRTSTR          ; ,,
-            lda #110            ; Set screen color to reveal maze
-            sta SCRCOL          ; ,,
             jsr DragDoor        ; ,,
             jsr ShowHIXP        ; Show high score
             jmp Start           ; Back to wait for a new game
@@ -280,10 +272,10 @@ Victory:    lda #50             ; Add XP for winning
             jsr PRTSTR          ; ,,
             jsr DragDoor        ; ,,
             jsr ShowHIXP        ; Show high score
-            jsr Wait4Fire       ; When Fire is pressed, set the screen
-            lda #15             ;   color back and continue to the
-            sta SCRCOL          ;   next level
-            jmp continue        ;   ,,
+            jsr Wait4Fire       ; When Fire is pressed,
+            lda #7              ; Show the rest of the maze
+            jsr WipeColor       ; ,,
+            jmp continue        ; and go to next level
             
 ; Level Up
 LevelUp:    lda #6              ; Launch level up effect
@@ -296,8 +288,8 @@ LevelUp:    lda #6              ; Launch level up effect
             jsr IncXP           ; ,,
             bit HAS_MIRROR      ; Does player have the Magic Mirror Ball?
             bmi Victory         ; If so, game is over!            
-            lda #180            ; Delay for 3 seconds before starting
             jsr ShowScore       ; Show the score with the new XP
+            lda #180            ; Delay for 3 seconds before starting
             jsr Delay           ;   the next level
 continue:   jsr ScrollMaze      ; Scroll the maze off to the left
             jsr DrumStop        ; Stop drums and reset volume
@@ -1622,7 +1614,7 @@ Pad_3583:   .asc "(C) 2021 JASON JUSTIAN, BEIGE MAZE VIC LAB",$0d
             .asc "FILE. IF NOT, PLEASE SEE:",$0d
             .asc "https://creativecommons.org/licenses/by-nc"
             .asc "/4.0/legalcode.txt",$00
-            .asc "--------------------------------"
+            .asc "----------------------------------------------"
             
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
