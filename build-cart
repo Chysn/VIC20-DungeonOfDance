@@ -1,0 +1,8 @@
+xa -l toc-cart -o ./vic/dungeon-cart.tmp ./src/dungeon-cart.asm
+cat ./vic/dungeon-cart.tmp ./vic/padding.bin | head -c 8192 > ./vic/dungeon-cart.bin
+rm ./vic/dungeon-cart.tmp
+printf "\x00\xa0" | cat - ./vic/dungeon-cart.bin > ./vic/dungeon-cart.prg
+
+## Make CRT file
+/Applications/vice-x86-64-gtk3-3.6.1/bin/cartconv -t vic20 -i ./vic/dungeon-cart.bin -o ./vic/dungeon.crt -l 0xa000
+
